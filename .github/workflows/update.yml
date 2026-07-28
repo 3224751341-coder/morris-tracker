@@ -1,0 +1,41 @@
+name: Update Morris Tracker
+
+on:
+  schedule:
+    - cron: '0 2 * * *'   # UTC 02:00 = BJ 10:00（避开X平台高峰9-12）
+  workflow_dispatch:       # 可手动触发
+
+permissions:
+  contents: write  # 需要推送更新后的 tweets.json
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install opencli
+        run: npm install -g opencli
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run monitor (抓取+生成+部署)
+        run: python monitor.py
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+
+      - name: Commit updated data
+        run: |
+          git config user.name "morris-tracker-bot"
+          git config user.email "bot@morris-tracker"
+          git add data/tweets.json
+          git diff --staged --quiet || (git commit -m "chore: auto-update tweets [skip ci]" && git push)
