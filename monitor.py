@@ -10,8 +10,8 @@ USERNAME = "morris_lt"
 BJ = timezone(timedelta(hours=8))
 
 def fetch_tweets(limit=50):
-    """抓取用户推文 — 优先 opencli（本地），回退 Playwright（云）"""
-    # Try opencli first (local Mac with Chrome extension)
+    """抓取用户推文 — 三层兜底：opencli → Nitter RSS → Playwright"""
+    # Tier 1: opencli (local Mac with Chrome extension)
     try:
         result = subprocess.run(
             ["opencli", "twitter", "tweets", USERNAME, "--limit", str(limit), "-f", "json",
@@ -26,23 +26,53 @@ def fetch_tweets(limit=50):
     except:
         pass
 
-    # Fallback: Playwright headless scraper
-    print("opencli 不可用，使用 Playwright 浏览器抓取...")
+    # Tier 2: Nitter RSS (cloud, no auth needed)
+    import urllib.request, html as html_mod, re
+    nitter_url = f"https://nitter.net/{USERNAME}/rss"
+    print(f"Nitter RSS: {nitter_url}")
+    try:
+        req = urllib.request.Request(nitter_url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            xml = resp.read().decode("utf-8")
+        items = re.findall(r"<item>(.*?)</item>", xml, re.DOTALL)
+        if items:
+            tweets = []
+            for item in items:
+                m_title = re.search(r"<title>(.*?)</title>", item, re.DOTALL)
+                m_date = re.search(r"<pubDate>(.*?)</pubDate>", item)
+                m_link = re.search(r"<link>(.*?)</link>", item)
+                if m_title and m_date and m_link:
+                    tid_m = re.search(r"/status/(\d+)", m_link.group(1))
+                    tweets.append({
+                        "id": tid_m.group(1) if tid_m else "",
+                        "text": html_mod.unescape(m_title.group(1)).strip(),
+                        "created_at": m_date.group(1).strip(),
+                        "likes": 0, "retweets": 0, "replies": 0, "views": 0,
+                        "url": f"https://x.com/{USERNAME}/status/{tid_m.group(1)}" if tid_m else "",
+                        "captured_at": datetime.now(BJ).strftime("%Y-%m-%d %H:%M"),
+                    })
+            print(f"Nitter RSS 抓取成功: {len(tweets)} 条")
+            return tweets
+        print("Nitter RSS 无内容")
+    except Exception as e:
+        print(f"Nitter RSS 失败: {e}")
+
+    # Tier 3: Playwright headless (last resort, needs cookies)
+    print("尝试 Playwright 浏览器抓取...")
     try:
         result = subprocess.run(
             [sys.executable, os.path.join(PROJECT_DIR, "fetch_x.py"), USERNAME, str(limit)],
             capture_output=True, text=True, timeout=90
         )
+        if result.stderr:
+            print(f"Playwright 日志:\n{result.stderr[:500]}")
         if result.returncode == 0:
             data = json.loads(result.stdout)
             if isinstance(data, list):
                 print(f"Playwright 抓取成功: {len(data)} 条")
                 return data
-            print(f"Playwright 返回格式异常")
-        else:
-            print(f"Playwright 抓取失败: {result.stderr[:300]}")
     except Exception as e:
-        print(f"Playwright 执行异常: {e}")
+        print(f"Playwright 异常: {e}")
 
     return []
 

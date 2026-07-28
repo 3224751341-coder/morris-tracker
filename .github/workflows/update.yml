@@ -19,17 +19,11 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Playwright
-        run: |
-          pip install playwright
-          playwright install chromium
-
-      - name: Run monitor (抓取+生成+部署)
+      - name: Run monitor (Nitter RSS 抓取+生成+部署)
         run: python monitor.py
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-          X_TWITTER_COOKIES: ${{ secrets.X_TWITTER_COOKIES }}
 
       - name: Commit updated data
         run: |
