@@ -9,20 +9,42 @@ HTML_FILE = os.path.join(PROJECT_DIR, "index.html")
 USERNAME = "morris_lt"
 BJ = timezone(timedelta(hours=8))
 
-def fetch_tweets(limit=30):
-    """抓取用户推文"""
-    result = subprocess.run(
-        ["opencli", "twitter", "tweets", USERNAME, "--limit", str(limit), "-f", "json",
-         "--window", "background", "--keep-tab", "false"],
-        capture_output=True, text=True, timeout=60
-    )
-    if result.returncode != 0:
-        print(f"抓取失败: {result.stderr[:200]}")
-        return []
+def fetch_tweets(limit=50):
+    """抓取用户推文 — 优先 opencli（本地），回退 Playwright（云）"""
+    # Try opencli first (local Mac with Chrome extension)
     try:
-        return json.loads(result.stdout) if isinstance(json.loads(result.stdout), list) else []
+        result = subprocess.run(
+            ["opencli", "twitter", "tweets", USERNAME, "--limit", str(limit), "-f", "json",
+             "--window", "background", "--keep-tab", "false"],
+            capture_output=True, text=True, timeout=60
+        )
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            if isinstance(data, list) and len(data) > 0:
+                print(f"opencli 抓取成功: {len(data)} 条")
+                return data
     except:
-        return []
+        pass
+
+    # Fallback: Playwright headless scraper
+    print("opencli 不可用，使用 Playwright 浏览器抓取...")
+    try:
+        result = subprocess.run(
+            [sys.executable, os.path.join(PROJECT_DIR, "fetch_x.py"), USERNAME, str(limit)],
+            capture_output=True, text=True, timeout=90
+        )
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            if isinstance(data, list):
+                print(f"Playwright 抓取成功: {len(data)} 条")
+                return data
+            print(f"Playwright 返回格式异常")
+        else:
+            print(f"Playwright 抓取失败: {result.stderr[:300]}")
+    except Exception as e:
+        print(f"Playwright 执行异常: {e}")
+
+    return []
 
 def load_db():
     if os.path.exists(DATA_FILE):
