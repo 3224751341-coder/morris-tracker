@@ -1,0 +1,8 @@
+{
+  "name": "morris-tracker",
+  "private": true,
+  "devDependencies": {
+    "opencli": "^latest",
+    "wrangler": "^4"
+  }
+}

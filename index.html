@@ -1,0 +1,2118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Morris 推文时间轴</title>
+<style>
+:root{
+    --bg:#faf9f5;
+    --surface:#fff;
+    --border:#e8e5e0;
+    --ink:#1c1917;
+    --ink-muted:#57534e;
+    --ink-soft:#a8a29e;
+    --amber:#b45309;
+    --amber-bg:#fffbeb;
+    --blue:#1d4ed8;
+    --radius:10px;
+    --ease: cubic-bezier(0.32, 0.72, 0, 1);
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{
+    font-family: "PingFang SC","Hiragino Sans GB","Noto Serif SC","Microsoft YaHei",serif;
+    background: var(--bg); color: var(--ink); line-height: 1.8;
+    -webkit-font-smoothing: antialiased; font-size: 15px;
+}
+header{
+    background: linear-gradient(135deg, #1c1917 0%, #292524 100%);
+    color: #fff; padding: 28px 24px; text-align: center;
+}
+header h1{ font-size: 20px; font-weight: 700; letter-spacing: -.02em; }
+header .sub{ font-size: 12px; opacity: .55; margin-top: 4px; }
+/* ── Layout ── */
+.layout{
+    display: grid;
+    grid-template-columns: 180px 1fr;
+    max-width: 880px; margin: 0 auto; padding: 24px 16px 60px;
+    gap: 28px; align-items: start;
+}
+/* ── Sidebar ── */
+.sidebar{
+    position: sticky; top: 20px;
+    display: flex; flex-direction: column; gap: 2px;
+}
+.date-item{
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px; border-radius: 8px; cursor: pointer;
+    transition: background .2s var(--ease);
+    user-select: none; font-size: 14px;
+}
+.date-item:hover{ background: var(--amber-bg); }
+.date-item.active{
+    background: var(--amber-bg);
+    box-shadow: inset 3px 0 0 var(--amber);
+}
+.date-label{ font-weight: 600; color: var(--ink); }
+.date-label .wk{ font-weight: 400; color: var(--ink-soft); font-size: 12px; }
+.date-count{
+    font-size: 11px; color: var(--ink-soft); background: var(--bg);
+    padding: 1px 8px; border-radius: 8px; font-weight: 500;
+    font-variant-numeric: tabular-nums;
+}
+.date-item.active .date-count{ background: var(--amber); color: #fff; }
+/* ── Content ── */
+.content{ min-height: 400px; }
+.day-panel{ display: none; }
+.day-panel.active{ display: block; animation: fadeIn .35s var(--ease); }
+@keyframes fadeIn{
+    from{ opacity: 0; transform: translateY(6px); }
+    to{ opacity: 1; transform: translateY(0); }
+}
+.tweet-card{
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px 20px; margin-bottom: 10px;
+    transition: box-shadow .2s var(--ease);
+}
+.tweet-card:hover{ box-shadow: 0 2px 8px rgba(0,0,0,.04); }
+.tweet-time{ font-size: 11px; color: var(--ink-soft); margin-bottom: 6px; }
+.tweet-text{ font-size: 15px; line-height: 1.8; word-break: break-word; }
+.tweet-text a{ color: var(--blue); text-decoration: none; }
+.tweet-text a:hover{ text-decoration: underline; }
+.tweet-stats{
+    display: flex; gap: 18px; margin-top: 12px; font-size: 12px;
+    color: var(--ink-soft); flex-wrap: wrap; align-items: center;
+}
+.tweet-stats .stat{ white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tweet-link{
+    color: var(--amber) !important; font-weight: 600;
+    text-decoration: none; margin-left: auto; transition: opacity .2s;
+}
+.tweet-link:hover{ opacity: .7; text-decoration: none; }
+/* ── Stats bar ── */
+.stats{ display: flex; gap: 12px; margin: 20px 0; }
+.stat-card{
+    flex: 1; background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px; text-align: center;
+}
+.stat-card .num{ font-size: 26px; font-weight: 700; color: var(--amber); font-variant-numeric: tabular-nums; }
+.stat-card .label{ font-size: 11px; color: var(--ink-soft); margin-top: 2px; }
+.footer{ text-align: center; color: var(--ink-soft); font-size: 11px; margin-top: 48px; }
+/* ── Empty state ── */
+.empty{ text-align: center; padding: 60px 20px; color: var(--ink-soft); }
+.empty p{ font-size: 14px; margin-top: 8px; }
+/* ── Mobile ── */
+@media (max-width: 768px){
+    .layout{
+        grid-template-columns: 1fr; gap: 16px;
+    }
+    .sidebar{
+        position: static; flex-direction: row; flex-wrap: wrap; gap: 4px;
+    }
+    .date-item{ font-size: 12px; padding: 6px 10px; }
+    .date-item.active{ box-shadow: inset 0 -2px 0 var(--amber); }
+    .date-count{ display: none; }
+}
+</style>
+</head>
+<body>
+<header>
+    <h1>Morris 推文时间轴</h1>
+    <div class="sub">@morris_lt · 追踪 13 天 179 条 · 更新于 2026-07-27 10:00</div>
+</header>
+<div class="layout">
+    <nav class="sidebar"><div class="date-item active" data-date="2026-07-27" onclick="switchDate('2026-07-27')">
+            <span class="date-label">07月27日 <span class="wk">周一</span></span>
+            <span class="date-count">1</span>
+        </div><div class="date-item " data-date="2026-07-26" onclick="switchDate('2026-07-26')">
+            <span class="date-label">07月26日 <span class="wk">周日</span></span>
+            <span class="date-count">15</span>
+        </div><div class="date-item " data-date="2026-07-25" onclick="switchDate('2026-07-25')">
+            <span class="date-label">07月25日 <span class="wk">周六</span></span>
+            <span class="date-count">12</span>
+        </div><div class="date-item " data-date="2026-07-24" onclick="switchDate('2026-07-24')">
+            <span class="date-label">07月24日 <span class="wk">周五</span></span>
+            <span class="date-count">11</span>
+        </div><div class="date-item " data-date="2026-07-23" onclick="switchDate('2026-07-23')">
+            <span class="date-label">07月23日 <span class="wk">周四</span></span>
+            <span class="date-count">12</span>
+        </div><div class="date-item " data-date="2026-07-22" onclick="switchDate('2026-07-22')">
+            <span class="date-label">07月22日 <span class="wk">周三</span></span>
+            <span class="date-count">15</span>
+        </div><div class="date-item " data-date="2026-07-21" onclick="switchDate('2026-07-21')">
+            <span class="date-label">07月21日 <span class="wk">周二</span></span>
+            <span class="date-count">12</span>
+        </div><div class="date-item " data-date="2026-07-20" onclick="switchDate('2026-07-20')">
+            <span class="date-label">07月20日 <span class="wk">周一</span></span>
+            <span class="date-count">10</span>
+        </div><div class="date-item " data-date="2026-07-19" onclick="switchDate('2026-07-19')">
+            <span class="date-label">07月19日 <span class="wk">周日</span></span>
+            <span class="date-count">15</span>
+        </div><div class="date-item " data-date="2026-07-18" onclick="switchDate('2026-07-18')">
+            <span class="date-label">07月18日 <span class="wk">周六</span></span>
+            <span class="date-count">11</span>
+        </div><div class="date-item " data-date="2026-07-17" onclick="switchDate('2026-07-17')">
+            <span class="date-label">07月17日 <span class="wk">周五</span></span>
+            <span class="date-count">14</span>
+        </div><div class="date-item " data-date="2026-07-16" onclick="switchDate('2026-07-16')">
+            <span class="date-label">07月16日 <span class="wk">周四</span></span>
+            <span class="date-count">8</span>
+        </div><div class="date-item " data-date="2000-01-01" onclick="switchDate('2000-01-01')">
+            <span class="date-label">01月01日 <span class="wk">周六</span></span>
+            <span class="date-count">43</span>
+        </div></nav>
+    <main class="content"><div class="day-panel active" id="panel-2026-07-27"><div class="tweet-card">
+                <div class="tweet-time">01:39</div>
+                <div class="tweet-text">缺少归属感的人，又高度依赖外界认可的人，往往会通过极端行为证明“我存在、我有价值、我不可被忽视”。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 14</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 5</span>
+                    <span class="stat">◎ 1.3k</span>
+                    <a href="https://x.com/morris_lt/status/2081555147491274776" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div></div><div class="day-panel " id="panel-2026-07-26"><div class="tweet-card">
+                <div class="tweet-time">10:30</div>
+                <div class="tweet-text">总寻找生意机会的人，就会一直停留在寻找机会的阶段。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 30</span>
+                    <span class="stat">⇄ 3</span>
+                    <span class="stat">✎ 8</span>
+                    <span class="stat">◎ 4.5k</span>
+                    <a href="https://x.com/morris_lt/status/2081326239030362565" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">10:23</div>
+                <div class="tweet-text">AI会让开发能力逐渐趋同，但思想差异会成为新的竞争壁垒。别人用AI生成功能，你用AI实现你的认知模型。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 21</span>
+                    <span class="stat">⇄ 2</span>
+                    <span class="stat">✎ 4</span>
+                    <span class="stat">◎ 3.6k</span>
+                    <a href="https://x.com/morris_lt/status/2081324432753299868" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">10:19</div>
+                <div class="tweet-text">最近中小加密交易所的陆续退出，意味着加密市场正在从早期的“高收益、高风险、强投机”阶段，逐渐进入“中收益、中风险、更加成熟”的阶段。过去依靠信息差、监管套利和市场混乱获得超额收益的机会正在减少，未来机会会更多集中在合规化、基础设施、长期价值和产业应用领域。加密行业正在从“淘金时代”走向“金融基础设施时代”。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 23</span>
+                    <span class="stat">⇄ 2</span>
+                    <span class="stat">✎ 5</span>
+                    <span class="stat">◎ 3.6k</span>
+                    <a href="https://x.com/morris_lt/status/2081323431082242436" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">09:19</div>
+                <div class="tweet-text">孤独有两种。一种是被动孤独：因为缺少陪伴、缺少理解、缺少连接，所以感到痛苦。这种孤独，本质上是对外界关系的渴望。另一种是主动孤独：主动选择独处，在没有外界认可和陪伴的情况下，依然能够保持内在稳定。这类人不依赖他人的理解来证明自己的价值，而是在独处中建立自己的精神世界、思考体系和人生方向。真正擅长孤独的人，并不是不需要别人，而是不再依赖别人来维持自己的存在感。他们拥有与世界连接的能力，也拥有与自己相处的自由。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 109</span>
+                    <span class="stat">⇄ 18</span>
+                    <span class="stat">✎ 12</span>
+                    <span class="stat">◎ 7.6k</span>
+                    <a href="https://x.com/morris_lt/status/2081308310876361187" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">03:28</div>
+                <div class="tweet-text">世界已经进入了一个不是比烂的阶段。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 84</span>
+                    <span class="stat">⇄ 10</span>
+                    <span class="stat">✎ 41</span>
+                    <span class="stat">◎ 2.2万</span>
+                    <a href="https://x.com/morris_lt/status/2081220044638589025" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">03:23</div>
+                <div class="tweet-text">偏激的人容易赢得流量，清醒的人更容易赢得自己。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 73</span>
+                    <span class="stat">⇄ 16</span>
+                    <span class="stat">✎ 33</span>
+                    <span class="stat">◎ 7.8k</span>
+                    <a href="https://x.com/morris_lt/status/2081218915267690948" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">02:58</div>
+                <div class="tweet-text">不要用今天的困境，替未来做出结论；人生很多时候不是没有路，而是还没走到下一段路，真正支撑一个人穿越低谷的，是面对现实依然保留改变的信念。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 149</span>
+                    <span class="stat">⇄ 27</span>
+                    <span class="stat">✎ 20</span>
+                    <span class="stat">◎ 1.0万</span>
+                    <a href="https://x.com/morris_lt/status/2081212650764292165" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">02:53</div>
+                <div class="tweet-text">每天都会收到很多私信，关于职业、创业、财富、成长、人生选择等问题。
+
+因为精力有限，普通私信我无法保证及时回复，有时候只能简单交流几句。
+
+如果你是订阅用户，我会提高回复优先级，并尽可能提供更及时、更深入、更系统的分析。
+
+因为真正重要的问题，往往不是得到一个答案，而是在关键选择中，获得一次更高质量的判断。
+
+不同阶段的人，需要不同程度的支持：
+
+公开内容： 分享我对世界的观察，以及简单的私信回复。
+订阅服务： 分享更深度的思考内容，并提供更高优先级、更深入的私信交流。
+顾问服务： 围绕个人位置、职业选择、创业方向和长期战略，进行持续陪伴式分析。
+
+我的目标不是替你做决定，而是帮助你建立属于自己的判断体系。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 24</span>
+                    <span class="stat">⇄ 10</span>
+                    <span class="stat">✎ 14</span>
+                    <span class="stat">◎ 5.5k</span>
+                    <a href="https://x.com/morris_lt/status/2081211251158605945" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">02:32</div>
+                <div class="tweet-text">长期稳定的尊重，更多来自一个人的价值、边界和独立性，而不是单纯的讨好和付出。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 126</span>
+                    <span class="stat">⇄ 20</span>
+                    <span class="stat">✎ 18</span>
+                    <span class="stat">◎ 1.1万</span>
+                    <a href="https://x.com/morris_lt/status/2081206082744263138" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">02:18</div>
+                <div class="tweet-text">有没有发现？在中国，买房可以买贷款，买车可以买贷款，创业做生意可以贷款，甚至9块钱的拼好饭都可以提前透支，但唯独当一个人生病、需要救命的时候，却很难通过金融体系获得支持。...
+
+这背后反映的是一个更深层的问题：市场和资本有自己的运行逻辑，它会优先服务能够产生收益、创造价值的领域，这本身并没有错。但一个社会不能把所有问题都交给市场解决，因为市场追求效率，而制度需要承担公平和保障的责任。
+
+医疗、教育、养老这些领域，本质上不是普通消费，而是人的基本生存需求。如果一个社会只强调商业效率，却缺少对基本民生的制度保障，那么最终承担风险的往往是普通个体。
+
+所以真正需要讨论的，不是资本应该不应该存在，而是制度是否承担了它应该承担的责任。一个成熟的社会，应该让市场创造财富，让制度守护底线。
+
+认清这一点，不是为了否定商业，而是为了理解这个世界的运行规则：商业解决增长，制度解决保障。对于个体来说，真正的成长，是看懂规则，然后提升自己的能力、资源和选择权。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 505</span>
+                    <span class="stat">⇄ 74</span>
+                    <span class="stat">✎ 55</span>
+                    <span class="stat">◎ 5.5万</span>
+                    <a href="https://x.com/morris_lt/status/2081202353030766916" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:49</div>
+                <div class="tweet-text">未来个人最大的生产资料，就是自己的认知、技术、产品能力和长期价值积累。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 91</span>
+                    <span class="stat">⇄ 16</span>
+                    <span class="stat">✎ 20</span>
+                    <span class="stat">◎ 7.7k</span>
+                    <a href="https://x.com/morris_lt/status/2081195096473838067" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:43</div>
+                <div class="tweet-text">这个世界所有的主流，都在教你成为主流。唯独不告诉你，成为你自己。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 87</span>
+                    <span class="stat">⇄ 19</span>
+                    <span class="stat">✎ 15</span>
+                    <span class="stat">◎ 7.0k</span>
+                    <a href="https://x.com/morris_lt/status/2081193558909002104" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:34</div>
+                <div class="tweet-text">真正提升认知的人，最终希望用户摆脱对自己的依赖；收割者，则需要用户永远停留在低认知状态，持续依赖自己的判断。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 16</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 2.7k</span>
+                    <a href="https://x.com/morris_lt/status/2081191504060743990" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:31</div>
+                <div class="tweet-text">有个大佬私信我说：你真傻，别人的都拿韭菜割。你却在教韭菜提升认知。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 16</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 5</span>
+                    <span class="stat">◎ 2.9k</span>
+                    <a href="https://x.com/morris_lt/status/2081190640868827213" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:29</div>
+                <div class="tweet-text">不要出售降低别人判断力的东西，而应该出售提升别人判断力的东西。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 70</span>
+                    <span class="stat">⇄ 11</span>
+                    <span class="stat">✎ 19</span>
+                    <span class="stat">◎ 8.3k</span>
+                    <a href="https://x.com/morris_lt/status/2081190205558817032" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div></div><div class="day-panel " id="panel-2026-07-25"><div class="tweet-card">
+                <div class="tweet-time">08:16</div>
+                <div class="tweet-text">都通过了...要是没进来的，就是XChat群有Bug <a href="https://t.co/QOxgbr4DHY" target="_blank" rel="noopener">https://t.co/QOxgbr4DHY</a></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 3</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 6</span>
+                    <span class="stat">◎ 4.8k</span>
+                    <a href="https://x.com/morris_lt/status/2080930168114389010" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">04:37</div>
+                <div class="tweet-text">我的群里有人问我：Morris，你如何看待王虹、邓煜等数学人才获得国际认可，以及Kimi等AI公司的发展？从结构性来看，两种不同人才成长体系的结果。
+
+先看，中国模式：
+社会目标+统一方向+资源集中+筛选机制+高强度竞争→少数顶尖人才→最后证明制度体系有效。
+
+这种模式有点像“奥运体育模式”在智力领域的应用。它通过明确目标、集中资源和层层筛选，把最优秀的一部分人推向世界前沿。所以它特别擅长培养需要长期积累、技术训练和强执行能力的人才，例如数学、工程、制造、AI等领域。但它的核心逻辑是：培养冠军。而不是：让每一个人拥有最大的探索空间。
+
+再看，美国模式：
+个人自由选择+多元环境+市场竞争+资本支持+失败容忍→大量实验→少数突破。
+
+这种模式不是提前判断谁会成功，而是让更多人在不同领域寻找自己的位置。有人进入科学，有人创业，有人研究技术，有人创造新的商业模式。大量失败，是为了换取少数改变世界的突破。它的核心逻辑是：创造更多可能。
+
+所以，两者区别：一个是：体系筛选优秀的人。另一个是：环境产生新的可能。中国可以培养世界级人才，这证明体系的有效性。但一个社会真正的创新能力，不只是看能否培养几个冠军，更取决于是否能让更多不同的人找到自己的位置。
+
+有很多愚蠢的家长的问题，也是如此。他们把成长理解成一条唯一赛道：进入筛选体系，成为那个被选中的人。但现实世界需要不同位置的人。有人成为科学家，有人成为企业家，有人成为技术专家，有人创造新的领域，有人可以成为一个快乐的人。真正重要的，不是成为别人定义的第一名，而是找到自己的位置，并持续创造价值。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 451</span>
+                    <span class="stat">⇄ 84</span>
+                    <span class="stat">✎ 83</span>
+                    <span class="stat">◎ 3.7万</span>
+                    <a href="https://x.com/morris_lt/status/2080875071124684967" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">03:18</div>
+                <div class="tweet-text">由于想加群的人太多了，前4个群都满了，再次开放第5群，快加入吧~  
+
+<a href="https://t.co/y7wVunabzq" target="_blank" rel="noopener">https://t.co/y7wVunabzq</a></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 19</span>
+                    <span class="stat">⇄ 1</span>
+                    <span class="stat">✎ 56</span>
+                    <span class="stat">◎ 2.2万</span>
+                    <a href="https://x.com/morris_lt/status/2080855087065502196" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">03:08</div>
+                <div class="tweet-text">有人在x群问我，比特币5万美金和6万美金，哪个更接近底部。对我来说，价格在2~10万美元其实都是同一个周期的问题。我部分比特币是在9000美元左右买入的，比起几千美元的价格差，我更关注的是下一轮价值重估。短线交易关注价格，长期投资关注位置。真正重要的，不是买在最低点，而是是否站在正确的周期里。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 115</span>
+                    <span class="stat">⇄ 6</span>
+                    <span class="stat">✎ 97</span>
+                    <span class="stat">◎ 2.4万</span>
+                    <a href="https://x.com/morris_lt/status/2080852731850621099" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">02:54</div>
+                <div class="tweet-text">这个世界很多的争夺和斗争，都是韭菜之争。低维竞争争输赢，高维竞争争位置。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 94</span>
+                    <span class="stat">⇄ 8</span>
+                    <span class="stat">✎ 11</span>
+                    <span class="stat">◎ 1.2万</span>
+                    <a href="https://x.com/morris_lt/status/2080849094298484837" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:57</div>
+                <div class="tweet-text">很多人争论开源和闭源，其实争论的早已不是代码。开源背后，是对开放、共享和去中心化的追求；闭源背后，是对产权、控制和商业激励的坚持。所以这场争论，本质上已经包含了技术之外的价值观冲突。但是开源和闭源都只是实现目标的手段。安全、可靠、效率和长期可持续，才是真正需要解决的问题。
+
+世界的发展从来不是推倒一切、重新建立一个完美体系，而是在已有基础上不断修正、融合和迭代。真正的创新，不是简单消灭过去，而是吸收过去有效的部分，重新组合成更适合未来的新结构。很多人喜欢相信“旧世界是错误的，新世界必须彻底替代旧世界”，但现实文明更多是演化，而不是重启。
+
+互联网没有消灭线下商业，移动互联网没有消灭 PC，AI也不会简单替代所有人类，而更可能重新定义人与工具的关系。把技术路线变成政治立场，是很多技术讨论走向极端的开始。真正成熟的思考，不是选择一个阵营，而是理解不同机制存在的原因，并寻找更优的组合。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 3</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 3</span>
+                    <span class="stat">◎ 480</span>
+                    <a href="https://x.com/morris_lt/status/2080834784356630572" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:37</div>
+                <div class="tweet-text">在我x群里有人问，某某A股的股票如何？我回复的是：买A股票，就如同斗地主，你面对着地主有1000个大王。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 10</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 6</span>
+                    <span class="stat">◎ 1.9k</span>
+                    <a href="https://x.com/morris_lt/status/2080829763762184613" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:21</div>
+                <div class="tweet-text">技术革命周期：
+讲故事 → 资本涌入 → 基础设施建设 → 泡沫破裂 → 淘汰伪需求 → 价值重估 → 应用爆发</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 16</span>
+                    <span class="stat">⇄ 1</span>
+                    <span class="stat">✎ 6</span>
+                    <span class="stat">◎ 1.7k</span>
+                    <a href="https://x.com/morris_lt/status/2080825830561996963" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:10</div>
+                <div class="tweet-text">年轻靠体力，中年靠能力，晚年靠系统。真正厉害的人，不是在黄金期消耗自己，而是在黄金期建立一个让自己以后依然持续创造价值的系统。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 48</span>
+                    <span class="stat">⇄ 7</span>
+                    <span class="stat">✎ 3</span>
+                    <span class="stat">◎ 3.0k</span>
+                    <a href="https://x.com/morris_lt/status/2080823051890114938" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:03</div>
+                <div class="tweet-text">当一个国家亲手破坏了自己的发展能力，停滞反而比发展更安全，因为继续前进只会暴露更多问题。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 23</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 3</span>
+                    <span class="stat">◎ 3.1k</span>
+                    <a href="https://x.com/morris_lt/status/2080821185303208099" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">00:45</div>
+                <div class="tweet-text">我们经常听到一种说法：动物拥有预知死亡的能力。在生命最后时刻，它们会变得异常安静，表现出恐惧、不安，仿佛提前感受到了某种结局。很多人认为，它们知道自己即将死亡。但动物真正展现出来的，也许不是预知死亡，而是对危险的感知。它们能通过气味、声音、环境变化和群体状态，提前察觉异常。这不是神秘力量，而是生命经过漫长进化形成的感知系统。而这件事最后指向的，不是动物，而是人类自己。人类拥有更强大的理性，却可能逐渐失去了感知自己的能力。很多时候，身体、情绪和直觉早已经提醒我们某些变化，只是我们习惯用逻辑去忽略它。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 26</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 5</span>
+                    <span class="stat">◎ 3.1k</span>
+                    <a href="https://x.com/morris_lt/status/2080816799604756516" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">00:36</div>
+                <div class="tweet-text">为什么黄仁勋也开始经营自己的X账号，发布第一条公开帖子？为什么马斯克、扎克伯格、奥特曼等科技领袖，即使彼此存在观点冲突，也都开始主动经营自己的个人账号？因为...
+
+因为未来企业竞争的战场，已经不只是产品和市场，而是认知、注意力和生态的竞争。过去企业依靠媒体传播，而今天，创始人本身就是最大的传播入口。X正逐渐成为全球科技圈的重要信息战场，创始人通过自己的账号直接影响开发者、投资者、用户甚至行业方向。
+
+他们经营账号，并不是为了简单增加曝光，而是在建立自己的思想传播渠道。未来企业家的竞争公式会变成：
+
+产品能力 × 组织能力 × 注意力影响力 × 判断力传播能力。
+
+未来顶级企业家不只是管理公司，而是在持续输出对世界的判断，影响别人如何理解未来。所以未来越来越多的 CEO 会成为“思想型 CEO”。
+
+这也是为什么未来很多创业者真正需要的，不只是更多信息，而是更高质量的判断支持。因为机会越来越多，变化越来越快，一个人的认知边界，往往决定了他的选择边界。
+
+我提供的顾问服务，本质上不是提供答案，而是在关键阶段帮助创业者梳理自己的位置、资源、能力和方向，建立更清晰的判断系统。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 52</span>
+                    <span class="stat">⇄ 6</span>
+                    <span class="stat">✎ 6</span>
+                    <span class="stat">◎ 5.2k</span>
+                    <a href="https://x.com/morris_lt/status/2080814313112326418" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div></div><div class="day-panel " id="panel-2026-07-24"><div class="tweet-card">
+                <div class="tweet-time">05:19</div>
+                <div class="tweet-text">AI并不是替你赚钱，而是原本你就能赚钱，他放大了你的能力。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 112</span>
+                    <span class="stat">⇄ 10</span>
+                    <span class="stat">✎ 61</span>
+                    <span class="stat">◎ 1.2万</span>
+                    <a href="https://x.com/morris_lt/status/2080523334278922399" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">05:17</div>
+                <div class="tweet-text">感谢X上100 位订阅者，未来继续用观察、思考和实践，帮助更多人成为复杂世界中的判断者。 <a href="https://t.co/5A4JgUBcH9" target="_blank" rel="noopener">https://t.co/5A4JgUBcH9</a></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 20</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 85</span>
+                    <span class="stat">◎ 7.7k</span>
+                    <a href="https://x.com/morris_lt/status/2080522794887221459" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">03:07</div>
+                <div class="tweet-text">来聊天啊，你要有什么想聊的？关于投资，财富，成长，阴谋论？</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 74</span>
+                    <span class="stat">⇄ 2</span>
+                    <span class="stat">✎ 160</span>
+                    <span class="stat">◎ 2.6万</span>
+                    <a href="https://x.com/morris_lt/status/2080489965277135016" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">02:41</div>
+                <div class="tweet-text">我的X群里人说，他参加国内的投资顾问群，群里的投资顾问经理经常转发我的语录。其实，没必要中转，可以直接找我当顾问。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 41</span>
+                    <span class="stat">⇄ 1</span>
+                    <span class="stat">✎ 36</span>
+                    <span class="stat">◎ 9.5k</span>
+                    <a href="https://x.com/morris_lt/status/2080483584247480437" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">02:11</div>
+                <div class="tweet-text">记者说：很多人很讨厌你！
+马斯克：有2.5亿人关注我，说明喜欢我的人远比不喜欢我的人多。但我觉得讨厌你和媒体的人，比你想象的要多得多！</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 56</span>
+                    <span class="stat">⇄ 3</span>
+                    <span class="stat">✎ 19</span>
+                    <span class="stat">◎ 1.0万</span>
+                    <a href="https://x.com/morris_lt/status/2080475995560394894" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">02:06</div>
+                <div class="tweet-text">中国三代人，都活在不同的恐惧里：祖辈怕饿死，父辈怕没出息，这一代怕被时代淘汰。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 231</span>
+                    <span class="stat">⇄ 11</span>
+                    <span class="stat">✎ 42</span>
+                    <span class="stat">◎ 2.2万</span>
+                    <a href="https://x.com/morris_lt/status/2080474692968923191" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:53</div>
+                <div class="tweet-text">一个男人最危险的时刻，不是没钱，不是失败，而是突然开始问：“我这样活一辈子有什么意义？”因为这个问题一旦出现，过去支撑他的东西可能都会重新被审视。事业、财富、关系、身份，都可能重新排序。很多人以为这是迷茫，其实这是一个人开始真正面对自己人生的开始。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 10</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 729</span>
+                    <a href="https://x.com/morris_lt/status/2080471443360657560" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:45</div>
+                <div class="tweet-text">有人问长期主义和捷径冲突吗？其实不冲突，真正的长期主义，本身就是一种更高级的捷径。很多人理解的捷径，是快速获得结果，是绕过过程；但高手寻找的捷径，是找到规律，减少无效努力。短期主义的人总想找到一个方法马上赢，而长期主义的人是在寻找一个方向，让自己随着时间积累越来越强。真正厉害的人，往往不是拒绝捷径，而是在选择一条可以持续走十年、二十年的路，用长期积累换取复利，用时间放大优势。所以，短期捷径是在逃避过程，长期捷径是在找到规律。真正的捷径，从来不是更快，而是更接近本质。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 9</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 1</span>
+                    <span class="stat">◎ 961</span>
+                    <a href="https://x.com/morris_lt/status/2080469354790191441" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:39</div>
+                <div class="tweet-text">为什么XChat群bug这么多：1、加群超过300人左右，就无法看到申请列表了。2、超过350人，不能单独邀请其他人。3、有的群上限可以加500人，有的最多350人，有的最多可以380人左右。4、每次审核入群，不能同时批准多个人，只能一个一个批准，每次5-10秒钟后，才能通过一个人。@grok</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 5</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 2</span>
+                    <span class="stat">◎ 1.7k</span>
+                    <a href="https://x.com/morris_lt/status/2080467958787358913" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:30</div>
+                <div class="tweet-text">低水平社交是权力博弈，高水平社交是价值交换。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 20</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 2</span>
+                    <span class="stat">◎ 1.7k</span>
+                    <a href="https://x.com/morris_lt/status/2080465580528930822" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:24</div>
+                <div class="tweet-text">在90年代的中国，如果一个社会青年对别人说：“这是我的马子。”很多人会理解成：这是他的女朋友。但如果把这句话放到古代，古人可能完全听不懂。因为“马子”最早并不是女人，而是一种生活用品“夜壶”。一个今天代表亲密关系的词，曾经却和人的排泄用品有关。那么，为什么一个词会发生这么大的变化？因为语言从来不是固定的。它不是一本写好以后永远不变的字典，而是跟随着社会一起演化的系统。当社会结构、生活方式、人与人的关系发生变化，词语的意义也会重新被赋予。比如“老公”。今天我们说“老公”，代表丈夫，是一种亲密称呼。但在古代，“老公”并不是丈夫，甚至曾经用于称呼年长男性，后来还和宦官有关。同一个词，在不同年代里，承载的是不同社会关系。所以很多时候，我们以为自己在使用语言，实际上语言也在塑造我们的认知。你每天说出口的词，背后可能隐藏着几百年的历史变化。理解一个词的变化，其实是在理解一个社会如何变化。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 16</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 7</span>
+                    <span class="stat">◎ 2.2k</span>
+                    <a href="https://x.com/morris_lt/status/2080464091815280722" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div></div><div class="day-panel " id="panel-2026-07-23"><div class="tweet-card">
+                <div class="tweet-time">12:29</div>
+                <div class="tweet-text">BitMEX要关闭了。记得当年它是量化交易者的首选平台，那时候做量化，我一个月可以赚0.5个BTC。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 27</span>
+                    <span class="stat">⇄ 19</span>
+                    <span class="stat">✎ 46</span>
+                    <span class="stat">◎ 1.0万</span>
+                    <a href="https://x.com/morris_lt/status/2080268965142729101" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">06:17</div>
+                <div class="tweet-text">如果你是为了孩子的未来而囤积比特币，那么短暂的市场周期将无法击败你。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 89</span>
+                    <span class="stat">⇄ 6</span>
+                    <span class="stat">✎ 93</span>
+                    <span class="stat">◎ 2.0万</span>
+                    <a href="https://x.com/morris_lt/status/2080175382867890582" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">05:24</div>
+                <div class="tweet-text">当你开始质疑世界的时候，你的成长才刚刚开始。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 145</span>
+                    <span class="stat">⇄ 29</span>
+                    <span class="stat">✎ 39</span>
+                    <span class="stat">◎ 1.3万</span>
+                    <a href="https://x.com/morris_lt/status/2080162139306918234" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">03:30</div>
+                <div class="tweet-text">前三个群已经加满了，建立第四个群。大家可以加了~
+ 
+<a href="https://t.co/iWMZmM91G3" target="_blank" rel="noopener">https://t.co/iWMZmM91G3</a></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 27</span>
+                    <span class="stat">⇄ 1</span>
+                    <span class="stat">✎ 206</span>
+                    <span class="stat">◎ 3.3万</span>
+                    <a href="https://x.com/morris_lt/status/2080133547093049572" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">02:08</div>
+                <div class="tweet-text">随着AI和机器人技术的发展，当生产不再依赖大量人的劳动时，人类需要重新定义财富、工作、所有权和社会价值。未来的问题，不只是如何创造财富，而是谁拥有财富创造的所有权和收益权。在当前法制体系下，去中心化技术和加密货币，将成为重新设计数字时代价值分配机制的最佳工具。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 48</span>
+                    <span class="stat">⇄ 17</span>
+                    <span class="stat">✎ 8</span>
+                    <span class="stat">◎ 8.6k</span>
+                    <a href="https://x.com/morris_lt/status/2080112888950485501" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:43</div>
+                <div class="tweet-text">我开始手工，一点一点添加。添加的顺序：订阅我的→蓝V关注我的→关注我的→蓝v的→没关注我的→机器人。（后两个不加）</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 4</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 8</span>
+                    <span class="stat">◎ 1.4k</span>
+                    <a href="https://x.com/morris_lt/status/2080106517509156982" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:41</div>
+                <div class="tweet-text">为什么很多厉害的人，也无法判断3年后AI的发展方向？不是因为他们不够聪明，而是因为历史没有提供足够的参照物。过去的技术革命都有旧经验可以参考，但AI正在进入一个没有成熟答案的新领域。当旧叙事无法解释未来时，所有人都站在新的起跑线上。而这恰恰意味着，未来最大的机会，往往诞生于未知之中。因为没人能完全预测未来，所以才给了更多人重新定义未来的机会。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 7</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 3</span>
+                    <span class="stat">◎ 970</span>
+                    <a href="https://x.com/morris_lt/status/2080105941580877854" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:28</div>
+                <div class="tweet-text">订阅我的X，你将可以看到更多我深度思考的内容。 <a href="https://t.co/rXlvZ4T9b2" target="_blank" rel="noopener">https://t.co/rXlvZ4T9b2</a></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 6</span>
+                    <span class="stat">⇄ 1</span>
+                    <span class="stat">✎ 2</span>
+                    <span class="stat">◎ 1.4k</span>
+                    <a href="https://x.com/morris_lt/status/2080102729071096020" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:25</div>
+                <div class="tweet-text">没有付出代价的人，往往无法理解没有代价获得的东西。因为价值不仅来自信息本身，更来自获得信息时付出的成本。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 25</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 4</span>
+                    <span class="stat">◎ 1.8k</span>
+                    <a href="https://x.com/morris_lt/status/2080102022779650162" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:21</div>
+                <div class="tweet-text">真正长期稳定的交易高手，往往不是最聪明、最贪婪的人，而是最尊重规律的人。交易最终考验的不是预测能力，而是一个人面对不确定性的态度。一个缺乏边界、喜欢占便宜、无法控制欲望的人，很难长期面对市场，因为市场会不断放大人的贪婪、傲慢和侥幸。优秀的交易者通常对自然规律保持敬畏，不执着证明自己正确，而是在错误中修正自己；他们不把赚钱作为唯一目标，而是把做好决策、建立系统、理解市场作为核心。当认知和行为正确时，财富只是长期结果，而不是短期追逐的对象。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 19</span>
+                    <span class="stat">⇄ 3</span>
+                    <span class="stat">✎ 4</span>
+                    <span class="stat">◎ 1.5k</span>
+                    <a href="https://x.com/morris_lt/status/2080100960224092521" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:19</div>
+                <div class="tweet-text">很多人不是没有幸福的机会，而是没有承受幸福的能力。因为获得需要突破恐惧，拥有需要承担失去。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 11</span>
+                    <span class="stat">⇄ 1</span>
+                    <span class="stat">✎ 4</span>
+                    <span class="stat">◎ 1.8k</span>
+                    <a href="https://x.com/morris_lt/status/2080100351378948372" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:03</div>
+                <div class="tweet-text">为什么美国很多游泳池要经常用复杂的工序进行维护，而不是直接把水放掉清洗？很多人第一反应是：水脏了，放掉重新换水不是更简单吗？但美国很多家庭的泳池，并不是把水当成一次性消耗品，而是把它看成一个需要长期维护的系统。一个泳池通常包含过滤、循环、消毒、化学平衡等多个环节。工作人员会不断调整氯含量、酸碱度、清洁过滤，让这几十吨水保持长期稳定。因为真正昂贵的不是这一池水，而是让整个系统重新恢复稳定的成本。如果每次都放干重来，不仅需要大量重新注水，还要重新调整水质、重新加热，同时可能增加泳池结构损坏的风险。这背后体现的是一种不同的系统思维：低级的解决问题，是发现问题后推倒重来；高级的解决问题，是建立机制，让系统持续运行。很多事情也是如此。人生不是不断清零重新开始，而是维护自己的能力、经验、人脉和资源，让过去的积累不断产生新的价值。企业不是靠一次次重新创业，而是通过产品迭代、组织优化、客户维护，让系统不断进化。一个成熟的社会，也不是依靠一次次剧烈改变，而是通过规则、制度和流程，让复杂系统在变化中保持稳定。真正强大的系统，不是没有问题，而是具备持续修复、调整和进化的能力。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 23</span>
+                    <span class="stat">⇄ 4</span>
+                    <span class="stat">✎ 3</span>
+                    <span class="stat">◎ 2.5k</span>
+                    <a href="https://x.com/morris_lt/status/2080096351170519339" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div></div><div class="day-panel " id="panel-2026-07-22"><div class="tweet-card">
+                <div class="tweet-time">22:24</div>
+                <div class="tweet-text">每5秒能批准通过一个。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 2</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 2</span>
+                    <span class="stat">◎ 1.4k</span>
+                    <a href="https://x.com/morris_lt/status/2080056386613039475" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">22:15</div>
+                <div class="tweet-text">X-chat功能太垃圾了，群批准成员加入，只能一个一个批准，如同时点两个批准的话，就卡住了。 <a href="https://t.co/AtWvCsHZ9n" target="_blank" rel="noopener">https://t.co/AtWvCsHZ9n</a></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 4</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 11</span>
+                    <span class="stat">◎ 4.7k</span>
+                    <a href="https://x.com/morris_lt/status/2080054216211722489" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">14:05</div>
+                <div class="tweet-text">再次抱歉，手工添加的确加不过来。2群加不进去的，加3群:  <a href="https://t.co/K0gF6hHjZi" target="_blank" rel="noopener">https://t.co/K0gF6hHjZi</a></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 7</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 36</span>
+                    <span class="stat">◎ 5.2k</span>
+                    <a href="https://x.com/morris_lt/status/2079930744433238286" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">05:45</div>
+                <div class="tweet-text">谁还没加入到我的群里，留言，我一个一个加。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 334</span>
+                    <span class="stat">⇄ 4</span>
+                    <span class="stat">✎ 3.0k</span>
+                    <span class="stat">◎ 24.8万</span>
+                    <a href="https://x.com/morris_lt/status/2079805087032164644" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">04:33</div>
+                <div class="tweet-text">我的X群里，有人讨论在中国养老的商业模式。我开始插话了……其实，很多人认为中国老年人越来越多，所以养老产业、银发经济会有巨大的机会。但这个逻辑忽略了一个核心问题：钱不会因为老年人增加，而突然产生。中国养老的问题，本质不是商业机会问题，而是财富分配问题。中国不是在一个富裕阶段自然进入老龄化，而是在“未完全富裕”的阶段快速进入老龄社会，老年人和年轻人的比例极不协调。
+
+过去依靠家庭养老的模式，随着独生子女、城市化和人口结构变化，正在逐渐瓦解。同时，大量老年人没有足够资产，60后中有一部分享受了过去增长红利，但也有大量人没有积累；未来70后、80后进入老年后，可能是第一批大规模背负房贷、教育压力和消费压力的老年群体。未来，极少数富裕老年人可能依靠海外资产，小比例条件较好的老人依靠养老金，而大量普通老年人可能既没有足够资产，子女也无力完全照顾。
+
+核心是社会结构性问题，而社会结构性问题本质是制度问题，制度问题里最重要的是分配问题。但在这种制度属性下，又很难进行真正结构化的分配调整，只能不断在现有存量里转移分配。
+
+话说回来，虽然你看到的很多商业模式，本质都是在寻找可以被挖掘的财富空间。但是，在这样的结构下，做生意也会陷入一种矛盾：做长期，你没保证你有稳定的预期结构，最终被上层重新分配；做短期，又容易成为消耗有限资源、被迫成为大众眼里“喝血”的资本家。最终形成一种困境：要么成为“好”的穷人，要么成为“富”的坏人。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 266</span>
+                    <span class="stat">⇄ 43</span>
+                    <span class="stat">✎ 128</span>
+                    <span class="stat">◎ 4.6万</span>
+                    <a href="https://x.com/morris_lt/status/2079786952627462591" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">03:16</div>
+                <div class="tweet-text">美国《CLARITY Act》（数字资产市场清晰法案）详细立法流程表（当前时间），还需要一段时间。 <a href="https://t.co/1NjbJflFLG" target="_blank" rel="noopener">https://t.co/1NjbJflFLG</a></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 38</span>
+                    <span class="stat">⇄ 3</span>
+                    <span class="stat">✎ 65</span>
+                    <span class="stat">◎ 1.8万</span>
+                    <a href="https://x.com/morris_lt/status/2079767419267194904" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">03:05</div>
+                <div class="tweet-text">很多创业者真正的护城河，不是资本，不是流量，而是信任。用户购买的很多时候不是商品本身，而是对一个人的价值观、判断力和行动模式的认可。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 120</span>
+                    <span class="stat">⇄ 7</span>
+                    <span class="stat">✎ 24</span>
+                    <span class="stat">◎ 1.5万</span>
+                    <a href="https://x.com/morris_lt/status/2079764847882059820" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">02:30</div>
+                <div class="tweet-text">测试下狗狗币的曲线 dogecoin:native</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 20</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 21</span>
+                    <span class="stat">◎ 1.3万</span>
+                    <a href="https://x.com/morris_lt/status/2079755880099373308" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">02:21</div>
+                <div class="tweet-text">你如何管理加密资产，暴露了你的财富阶段：
+拥有加密货币的人，一般用热钱包。
+拥有10万美金的人，一般用交易所。
+拥有50万美金的人，一般用硬件冷钱包。
+拥有100万美金的人，一般用多签钱包。
+拥有1000万美金的人，一般用信托管理。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 81</span>
+                    <span class="stat">⇄ 6</span>
+                    <span class="stat">✎ 27</span>
+                    <span class="stat">◎ 2.3万</span>
+                    <a href="https://x.com/morris_lt/status/2079753695223513436" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:55</div>
+                <div class="tweet-text">孩子长大，不是变得叛逆，而是终于拥有了重新认识父母的能力。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 1</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 1</span>
+                    <span class="stat">◎ 380</span>
+                    <a href="https://x.com/morris_lt/status/2079747138419110365" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:36</div>
+                <div class="tweet-text">我感觉，X在训练我，我越是屏蔽机器人账号，机器人在我评论区里，就越加的疯狂。 <a href="https://t.co/eTTW1Z7EYJ" target="_blank" rel="noopener">https://t.co/eTTW1Z7EYJ</a></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 9</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 6</span>
+                    <span class="stat">◎ 1.8k</span>
+                    <a href="https://x.com/morris_lt/status/2079742334040973801" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:23</div>
+                <div class="tweet-text">交易，是人与人的博弈；贸易，是文明与文明的交换；经济，是制度与制度的竞争。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 12</span>
+                    <span class="stat">⇄ 2</span>
+                    <span class="stat">✎ 3</span>
+                    <span class="stat">◎ 1.8k</span>
+                    <a href="https://x.com/morris_lt/status/2079739145866662000" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:20</div>
+                <div class="tweet-text">最好的人生，就是不断找到更好的自己的过程。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 12</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 5</span>
+                    <span class="stat">◎ 1.4k</span>
+                    <a href="https://x.com/morris_lt/status/2079738422068138069" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:12</div>
+                <div class="tweet-text">在中国，为什么越是思想贫瘠的人，越喜欢说“老祖宗的智慧”？因为他们缺少独立判断的能力，只能借助过去的权威来证明自己的观点。“老祖宗说过”成了一种最低成本的论证，不需要逻辑，不需要验证，只需要搬出一个无法反驳的身份标签。很多人把古老等同于正确，把传承等同于价值，把过去的局限包装成深奥智慧。真正的问题不是有没有传统，而是有人停止思考，把历史当答案，把祖先当权威。一个人越需要靠“祖宗”证明自己，往往越说明他缺少面对现实和重新判断的能力。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 21</span>
+                    <span class="stat">⇄ 3</span>
+                    <span class="stat">✎ 8</span>
+                    <span class="stat">◎ 1.9k</span>
+                    <a href="https://x.com/morris_lt/status/2079736350396543334" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">00:52</div>
+                <div class="tweet-text">有人私信问我，在X上黄推太多，大脑被性欲占据，应该如何解决？其实，这个问题表面是性欲问题，本质是注意力和人生方向的问题。人的大脑天然追求即时反馈，而色情、娱乐、短视频等都是高刺激来源。当一个人没有更大的目标承载自己的注意力，就容易被这些低成本刺激吸引。真正的自律不是压制欲望，而是建立一个更强的人生系统。当你的成长、事业、能力和未来目标足够重要，低级刺激自然会降低吸引力。欲望不是敌人，关键是你是否拥有分配自己注意力的能力。年轻阶段最大的财富不是钱，而是注意力。你长期把注意力投入哪里，未来就会成为什么样的人。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 79</span>
+                    <span class="stat">⇄ 10</span>
+                    <span class="stat">✎ 9</span>
+                    <span class="stat">◎ 4.1k</span>
+                    <a href="https://x.com/morris_lt/status/2079731346675757509" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div></div><div class="day-panel " id="panel-2026-07-21"><div class="tweet-card">
+                <div class="tweet-time">05:43</div>
+                <div class="tweet-text">金融市场里，最稀缺的不是一个买卖信号，而是人在复杂环境里的判断系统。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 91</span>
+                    <span class="stat">⇄ 7</span>
+                    <span class="stat">✎ 65</span>
+                    <span class="stat">◎ 1.1万</span>
+                    <a href="https://x.com/morris_lt/status/2079442003771924703" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">05:39</div>
+                <div class="tweet-text">普通人不应该关注BTC的价格是否到100万美金，而应该关注自己在未来金融体系中的位置。价格是短期波动，位置决定长期机会。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 52</span>
+                    <span class="stat">⇄ 2</span>
+                    <span class="stat">✎ 87</span>
+                    <span class="stat">◎ 9.4k</span>
+                    <a href="https://x.com/morris_lt/status/2079440991736787206" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">05:32</div>
+                <div class="tweet-text">很多顶级投资者其实都有一个共同点：他们不是靠交易活下来，而是因为活得下来，所以最终成为优秀交易者。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 183</span>
+                    <span class="stat">⇄ 12</span>
+                    <span class="stat">✎ 24</span>
+                    <span class="stat">◎ 1.4万</span>
+                    <a href="https://x.com/morris_lt/status/2079439426519011725" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">05:27</div>
+                <div class="tweet-text">伊朗问题有没有解决，哪个AI排名靠前靠后，哪个国家赢了输了，世界下一次危机什么时候发生……这些事情可以关注，但和你有什么直接关系？真正与你有关的是自己的成长、能力积累、财富结构、身体健康，以及如何在变化的世界里找到自己的位置。世界每天都在变化，但不是所有变化都值得投入注意力。观察世界，理解规律，然后把注意力放回自己。最终决定你未来的，不是世界发生了什么，而是你面对变化时，你成为了谁。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 109</span>
+                    <span class="stat">⇄ 10</span>
+                    <span class="stat">✎ 23</span>
+                    <span class="stat">◎ 9.5k</span>
+                    <a href="https://x.com/morris_lt/status/2079438172480770230" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">04:13</div>
+                <div class="tweet-text">为什么很多女人更容易对漂亮的女人产生敌意，而男人却往往愿意和帅气、优秀的人成为朋友？这背后并不是简单的嫉妒，而是男女在竞争逻辑上的不同。人都会本能地比较，但比较的维度并不一样。对于很多女性来说，外貌、吸引力、社交认可等因素，长期以来都是重要的竞争资源，所以当一个更漂亮、更受欢迎的女性出现时，容易触发潜意识里的比较和防御。而男性之间，外貌通常不是核心竞争指标，一个帅气的朋友反而可能被认为是朋友圈的加分项。男性更容易围绕能力、地位、资源和成就展开竞争。因此，一个人的优势是否会被别人接受，不只取决于这个优势本身，更取决于它是否触碰到了对方所在领域的核心竞争资源。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 186</span>
+                    <span class="stat">⇄ 15</span>
+                    <span class="stat">✎ 32</span>
+                    <span class="stat">◎ 1.9万</span>
+                    <a href="https://x.com/morris_lt/status/2079419452878409865" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">02:52</div>
+                <div class="tweet-text">有人说，新的一轮加密牛市要来了。但这只情绪的噪音，真正理解其中逻辑从来不是单一叙事。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 1</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 5</span>
+                    <span class="stat">◎ 2.7k</span>
+                    <a href="https://x.com/morris_lt/status/2079399113091875119" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:37</div>
+                <div class="tweet-text">据研究，追星会降低智商（病理性崇拜）。本质上是越追星越容易陷入极端、非理性的崇拜状态的人，往往在某些认知能力和心理特征上存在差异。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 24</span>
+                    <span class="stat">⇄ 1</span>
+                    <span class="stat">✎ 7</span>
+                    <span class="stat">◎ 2.7k</span>
+                    <a href="https://x.com/morris_lt/status/2079380212492698062" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">00:42</div>
+                <div class="tweet-text">你在X上，看到哪些“别人说的"内容感到疑惑，以及为什么对方要这样说？发出来，我给你分析。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 30</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 14</span>
+                    <span class="stat">◎ 8.3k</span>
+                    <a href="https://x.com/morris_lt/status/2079366437530182091" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">00:38</div>
+                <div class="tweet-text">X的群里有人问我，关于商业机会问题？我回答是：没有壁垒的事情，跟着商业周期走；自己有壁垒的事情，坚持长期主义。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 18</span>
+                    <span class="stat">⇄ 2</span>
+                    <span class="stat">✎ 5</span>
+                    <span class="stat">◎ 2.9k</span>
+                    <a href="https://x.com/morris_lt/status/2079365464472625290" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">00:29</div>
+                <div class="tweet-text">在中国历史中，最常见的斗争手段，就是先给对手贴上道德标签。把自己包装成君子（好人），把对方塑造成小人（坏人）。一旦对方被定义为“不道德”，那么打击对方就不再被认为是利益争夺，而被包装成维护正义。于是政治竞争容易演变成道德审判，最后追求的不是找到正确答案，而是获得最高权力的认可，并彻底击败对手。这也是权力中心最希望看到的景象。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 43</span>
+                    <span class="stat">⇄ 3</span>
+                    <span class="stat">✎ 8</span>
+                    <span class="stat">◎ 4.0k</span>
+                    <a href="https://x.com/morris_lt/status/2079363168724529637" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">00:25</div>
+                <div class="tweet-text">孤独的人，可能通过性欲寻找连接感；焦虑的人，可能通过食物获得安慰感；空虚的人，可能通过购物获得短暂满足；压力的人，可能通过游戏、酒精、刷信息暂时逃避。这些行为，本质上都是人在寻找一种内在缺失的补偿。而真正稳定的人，不是没有孤独、焦虑、空虚和压力，而是拥有被爱和自爱的能力，不需要不断依靠外部刺激填补自己。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 143</span>
+                    <span class="stat">⇄ 17</span>
+                    <span class="stat">✎ 14</span>
+                    <span class="stat">◎ 6.9k</span>
+                    <a href="https://x.com/morris_lt/status/2079362021309714885" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">00:13</div>
+                <div class="tweet-text">为什么越是穷人，越是希望这个世界有人来拯救他？其实，不能是穷人懒，而是越处于长期匮乏状态的人，越容易产生“外部拯救”的期待。而那些真正改变命运的人，往往经历一个转变是从：“谁能改变我的人生？”变成：“我如何提高自己改变人生的概率？”这其实也是一个人的认知位置变化。所以问题的核心不是“穷人为什么期待拯救”，而是：当一个人长期处于弱势位置时，他是否还能建立对自己未来的控制感。拥有控制感的人，即使暂时贫穷，也会寻找路径；失去控制感的人，即使拥有资源，也可能等待别人替他决定人生。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 72</span>
+                    <span class="stat">⇄ 13</span>
+                    <span class="stat">✎ 13</span>
+                    <span class="stat">◎ 1.9万</span>
+                    <a href="https://x.com/morris_lt/status/2079359143044169881" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div></div><div class="day-panel " id="panel-2026-07-20"><div class="tweet-card">
+                <div class="tweet-time">07:17</div>
+                <div class="tweet-text">世界正在发生深刻变化。未来，短期技巧、信息差和套利机会会逐渐减少。真正能够穿越周期的人，是那些选择正确方向、创造真实价值、积累长期信用，并始终保持善良的人。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 265</span>
+                    <span class="stat">⇄ 29</span>
+                    <span class="stat">✎ 84</span>
+                    <span class="stat">◎ 1.7万</span>
+                    <a href="https://x.com/morris_lt/status/2079103448583389503" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:51</div>
+                <div class="tweet-text">文让人看懂世界，武让人改变现实；谋让人选择方向，勇让人突破阻力。高手不一定四项平均，而是在自己的核心优势之上，拥有足够的其他能力支撑自己走得更远。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 8</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 3</span>
+                    <span class="stat">◎ 839</span>
+                    <a href="https://x.com/morris_lt/status/2079021339864908169" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:49</div>
+                <div class="tweet-text">很多痛苦并不是来自事情本身，而是来自大脑对未来的无限演绎。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 16</span>
+                    <span class="stat">⇄ 1</span>
+                    <span class="stat">✎ 3</span>
+                    <span class="stat">◎ 856</span>
+                    <a href="https://x.com/morris_lt/status/2079020962927054863" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:49</div>
+                <div class="tweet-text">很多人喜欢晒生活，其实晒的不是生活，而是对外界认可的渴望。房子、车子、学历、旅行、圈层，表面上是在展示拥有的东西，背后往往是在证明自己的价值。但展示本身并没有错，因为社会本来就是一个信号交换系统。真正有价值的展示，是为了让别人看到你的能力、成果和价值，从而获得资源、机会和合作；而只是为了获得羡慕和认可的展示，本质上是在把自己的价值交给别人定义。区别不在于晒什么，而在于你是在利用展示创造价值，还是依靠展示寻找价值。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 14</span>
+                    <span class="stat">⇄ 3</span>
+                    <span class="stat">✎ 3</span>
+                    <span class="stat">◎ 894</span>
+                    <a href="https://x.com/morris_lt/status/2079020760295985642" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:39</div>
+                <div class="tweet-text">别人都有人做了，你就做你自己。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 3</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 1.0k</span>
+                    <a href="https://x.com/morris_lt/status/2079018270611694053" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:28</div>
+                <div class="tweet-text">人类有一种建立自我评价体系的内在驱动力。当缺乏明确的客观标准时，我们会本能地通过外部比较来确认自己的价值。但问题在于，人生中真正重要的领域往往不存在统一答案，外部标准只能提供简单的衡量，却无法定义一个人的真实价值。长期依赖外部评价，容易让人陷入不断比较和焦虑之中。真正成熟的过程，是逐渐从向外寻找标准，转向向内建立标准。一个人的价值，不应该由别人拥有的东西来定义，而应该由自己经历后的成长、选择后的结果，以及是否成为更好的自己来衡量。最终，人需要完成从“别人如何评价我”到“我是否认可自己”的转变，因为只有建立属于自己的评价体系，才能获得真正稳定的内在力量。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 13</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 2</span>
+                    <span class="stat">◎ 1.9k</span>
+                    <a href="https://x.com/morris_lt/status/2079015535812235602" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:24</div>
+                <div class="tweet-text">你再优秀，也不能要求别人迁就你；
+你再弱势，也不能要求别人拯救你。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 18</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 3</span>
+                    <span class="stat">◎ 1.6k</span>
+                    <a href="https://x.com/morris_lt/status/2079014672632872992" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:20</div>
+                <div class="tweet-text">我喜欢劳尔时期的西班牙队。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 5</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 6</span>
+                    <span class="stat">◎ 2.4k</span>
+                    <a href="https://x.com/morris_lt/status/2079013497871172058" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:14</div>
+                <div class="tweet-text">还想加群的进，核心讨论成长、商业、投资。
+<a href="https://t.co/2sjNH0COHd" target="_blank" rel="noopener">https://t.co/2sjNH0COHd</a></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 7</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 4</span>
+                    <span class="stat">◎ 1.5k</span>
+                    <a href="https://x.com/morris_lt/status/2079011993038790715" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:02</div>
+                <div class="tweet-text">有人说，他和AI聊天，让AI评价自己，被说的很强大，这个是故意讨好吗？其实AI不了解完整的你，也不会因为一次就了解你。他会根据你给他的内容，他正向的评估你。就如同：你恋爱中的女友，和婚后的对比完全是两个人。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 15</span>
+                    <span class="stat">⇄ 1</span>
+                    <span class="stat">✎ 3</span>
+                    <span class="stat">◎ 2.3k</span>
+                    <a href="https://x.com/morris_lt/status/2079009055180570703" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div></div><div class="day-panel " id="panel-2026-07-19"><div class="tweet-card">
+                <div class="tweet-time">06:45</div>
+                <div class="tweet-text">你在用AI迭代你的产品的时候，有没有一种莫名的兴奋？</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 21</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 48</span>
+                    <span class="stat">◎ 1.0万</span>
+                    <a href="https://x.com/morris_lt/status/2078733044996051356" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">05:46</div>
+                <div class="tweet-text">真正有价值的思想，不是在脑子里想出来的，而是在现实世界中不断尝试、失败、观察、总结出来的。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 180</span>
+                    <span class="stat">⇄ 17</span>
+                    <span class="stat">✎ 61</span>
+                    <span class="stat">◎ 3.2万</span>
+                    <a href="https://x.com/morris_lt/status/2078718172228964806" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">05:30</div>
+                <div class="tweet-text">在我的X群里有人说，想做一件事情时间太紧，没有勇气迈出第一步。其实，时间太紧：往往来自经济压力。勇气不足：往往没有清晰的判断力。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 206</span>
+                    <span class="stat">⇄ 21</span>
+                    <span class="stat">✎ 28</span>
+                    <span class="stat">◎ 1.7万</span>
+                    <a href="https://x.com/morris_lt/status/2078714134561267984" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">02:24</div>
+                <div class="tweet-text">做一个综合对比：GPT、Claude、Gemini、Grok、Kimi。（黑图是GPT给的、白图是Grok给的、灰图是Kimi的）。所以，你知道吗，AI都是有立场的。 <a href="https://t.co/EFYOCLv21Z" target="_blank" rel="noopener">https://t.co/EFYOCLv21Z</a></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 35</span>
+                    <span class="stat">⇄ 1</span>
+                    <span class="stat">✎ 21</span>
+                    <span class="stat">◎ 1.6万</span>
+                    <a href="https://x.com/morris_lt/status/2078667318645882894" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">02:05</div>
+                <div class="tweet-text">《清晰法案》通过最大的意义，是让加密货币正式走向主流金融市场。监管明确后，传统金融机构才敢大规模进入，未来ETF、RWA、稳定币、链上金融等领域可能迎来更大规模的发展。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 97</span>
+                    <span class="stat">⇄ 7</span>
+                    <span class="stat">✎ 28</span>
+                    <span class="stat">◎ 1.7万</span>
+                    <a href="https://x.com/morris_lt/status/2078662459473416604" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:50</div>
+                <div class="tweet-text">极端的人生经历，会迫使一个人完成心理结构的升级。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 283</span>
+                    <span class="stat">⇄ 19</span>
+                    <span class="stat">✎ 18</span>
+                    <span class="stat">◎ 1.9万</span>
+                    <a href="https://x.com/morris_lt/status/2078658679608680741" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:41</div>
+                <div class="tweet-text">未被表达的情绪，永远不会凭空消失。它们只是被活埋在内心深处，沉默地积累，等待一个出口。有一天，当压抑超过承受的边界，它们终会以一种更加扭曲、更加失控的方式重新出现。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 191</span>
+                    <span class="stat">⇄ 17</span>
+                    <span class="stat">✎ 15</span>
+                    <span class="stat">◎ 1.2万</span>
+                    <a href="https://x.com/morris_lt/status/2078656405666730028" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:32</div>
+                <div class="tweet-text">AI正在变得越来越完美，但人之所以是人，恰恰在于那些粗糙、矛盾、偶然和不合逻辑的部分。真正打动人的，从来不是毫无瑕疵的标准答案，而是一个人在经历、选择和挣扎中留下的独特痕迹。也许所谓的完美，并不是消除所有缺陷，而是那些与众不同的瑕疵，最终组成了一个人的不可替代。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 62</span>
+                    <span class="stat">⇄ 1</span>
+                    <span class="stat">✎ 7</span>
+                    <span class="stat">◎ 8.2k</span>
+                    <a href="https://x.com/morris_lt/status/2078654257990189309" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:30</div>
+                <div class="tweet-text">据研究，随着脑电波解析技术的发展，人类将进入一个无法隐藏认知与意图的时代。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 59</span>
+                    <span class="stat">⇄ 4</span>
+                    <span class="stat">✎ 9</span>
+                    <span class="stat">◎ 1.3万</span>
+                    <a href="https://x.com/morris_lt/status/2078653632980164956" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:16</div>
+                <div class="tweet-text">个人成长与创造，确实是解决绝大多数长期问题的最优解。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 67</span>
+                    <span class="stat">⇄ 14</span>
+                    <span class="stat">✎ 61</span>
+                    <span class="stat">◎ 8.3k</span>
+                    <a href="https://x.com/morris_lt/status/2078650176521257346" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:12</div>
+                <div class="tweet-text">成为我的订阅用户，你将可以看到更多理性和深度的分析内容。订阅帖子将到达我每天帖子的50%。 <a href="https://t.co/JlRFc2ww57" target="_blank" rel="noopener">https://t.co/JlRFc2ww57</a></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 74</span>
+                    <span class="stat">⇄ 5</span>
+                    <span class="stat">✎ 3</span>
+                    <span class="stat">◎ 8.6k</span>
+                    <a href="https://x.com/morris_lt/status/2078649186967597251" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:01</div>
+                <div class="tweet-text">人穷就一定不要得抑郁症。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 261</span>
+                    <span class="stat">⇄ 11</span>
+                    <span class="stat">✎ 35</span>
+                    <span class="stat">◎ 4.0万</span>
+                    <a href="https://x.com/morris_lt/status/2078646380235727000" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">00:59</div>
+                <div class="tweet-text">美国纽约州有个消费者自主护理援助计划，大意是政府给照顾年迈父母的子女发放工资（医疗补助），时薪可达20美元左右。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 29</span>
+                    <span class="stat">⇄ 1</span>
+                    <span class="stat">✎ 8</span>
+                    <span class="stat">◎ 1.0万</span>
+                    <a href="https://x.com/morris_lt/status/2078645793955918217" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">00:48</div>
+                <div class="tweet-text">真正高效的统治，不需要控制每个人的思想，只需要控制利益的出口。当所有人的利益都只能从同一个孔道流出，人便会主动服从，这就是“利出一孔”。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 181</span>
+                    <span class="stat">⇄ 21</span>
+                    <span class="stat">✎ 42</span>
+                    <span class="stat">◎ 1.4万</span>
+                    <a href="https://x.com/morris_lt/status/2078643217336258815" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">00:44</div>
+                <div class="tweet-text">苦难创造信仰，失去选择创造迷信。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 51</span>
+                    <span class="stat">⇄ 1</span>
+                    <span class="stat">✎ 4</span>
+                    <span class="stat">◎ 7.1k</span>
+                    <a href="https://x.com/morris_lt/status/2078642133867888789" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div></div><div class="day-panel " id="panel-2026-07-18"><div class="tweet-card">
+                <div class="tweet-time">10:46</div>
+                <div class="tweet-text">为什么历史上很多征服世界的人、建立帝国的人、创造商业传奇的人，最终都会在亲密关系、家庭关系甚至继承问题上出现困境？因为人的能力并不是一个完整均衡的系统。一个人可以通过竞争、判断、执行、资源整合，获得改变外部世界的能力，但这种能力并不会自动转化为理解自己、理解他人、建立深层关系的能力。
+
+外部世界遵循力量、效率和结果的逻辑，一个优秀的领导者可以通过规则和权力管理组织；但亲密关系面对的是复杂的人性，它需要信任、共情、边界和长期的情感连接。当一个人长期依靠控制和胜利来获得成功，他容易把同样的逻辑带入最亲近的关系，希望用能力解决情感问题，用地位换取忠诚，用资源交换爱与认可。但真正的亲密关系无法被征服，它需要的是平等和真实。
+
+更深层的问题在于，成功往往会放大一个人的优势，也会放大他的缺陷：野心可以帮助他创造伟大事业，也可能让他忽视身边人的感受；果断可以帮助他赢得竞争，也可能让他难以倾听；强大的自我可以支撑他突破限制，也可能让他无法接受别人拥有独立意志。因此，很多强者最终面对的最大挑战，并不是如何改变世界，而是如何在拥有改变世界的力量之后，重新认识自己，理解关系，并建立一个不依赖权力运行的内在世界。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 227</span>
+                    <span class="stat">⇄ 33</span>
+                    <span class="stat">✎ 64</span>
+                    <span class="stat">◎ 1.9万</span>
+                    <a href="https://x.com/morris_lt/status/2078431160636756202" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">08:28</div>
+                <div class="tweet-text">RT @Morris_LT: @TKTKlas 看三个条件：
+1、选择技术和知识密集、全球需求存在、能力可以跨市场迁移的方向。 
+2、大学阶段最大的价值，不只是获得一个专业，进入更高质量的环境圈子。
+3、专业选择之外，更重要的是培养底层能力：数学能力、技术能力、沟通能力、商业理…</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 7</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2078396580558995725" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">08:04</div>
+                <div class="tweet-text">RT @Morris_LT: @DeepChaosEra 真正的躺平其实是有门槛的：是有稳定的现金流、可迁移的能力、足够低的生活成本。是在拥有选择权之后，主动降低竞争强度，按照自己的目标生活。而被动停止不能叫躺平，更像是失去选择后的停滞。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 10</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 1</span>
+                    <a href="https://x.com/morris_lt/status/2078390473144881182" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">06:09</div>
+                <div class="tweet-text">我的产品迭代中，一个关于我思想的产品。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 5</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 1</span>
+                    <span class="stat">◎ 803</span>
+                    <a href="https://x.com/morris_lt/status/2078361495390609652" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">05:45</div>
+                <div class="tweet-text">RT @Morris_LT: 上次的Morris闲聊群1满了，还有待审核的人99+。我今天再开一个2群。讨论的话题还是观察世界、个人成长、投资、创业等话题。大家快加，群满了就关闭。
+<a href="https://t.co/2sjNH0COHd" target="_blank" rel="noopener">https://t.co/2sjNH0COHd</a></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 2</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2078355373082480786" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">03:22</div>
+                <div class="tweet-text">有人说，八字、紫微斗数这些靠谱吗？这种东西本质上是历史经验类总结的一套解释框架，有启发性，而不是结论，也不是经过科学验证的预测模型。这类经验体系的局限在于：身样本有限、难以验证和迭代、容易忽略变量变化、容易产生因果错觉、难以规模化复制。所以，当你面对复杂变化的世界，尤其是投资、商业和职业选择等问题，真正有效的方法需要数据验证、持续迭代和动态调整。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 44</span>
+                    <span class="stat">⇄ 2</span>
+                    <span class="stat">✎ 20</span>
+                    <span class="stat">◎ 6.4k</span>
+                    <a href="https://x.com/morris_lt/status/2078319487745757366" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">03:02</div>
+                <div class="tweet-text">AI只是你能力的一面镜子。因为：你的目标决定你让AI解决什么问题；你认知决定你能提出什么问题；你的经验决定你如何理解和筛选答案；你的判断决定你最终如何行动；执行能力决定你能否把结果落地。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 65</span>
+                    <span class="stat">⇄ 4</span>
+                    <span class="stat">✎ 8</span>
+                    <span class="stat">◎ 4.7k</span>
+                    <a href="https://x.com/morris_lt/status/2078314350612566135" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">02:45</div>
+                <div class="tweet-text">投资不是信息差，而是判断力差。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 57</span>
+                    <span class="stat">⇄ 8</span>
+                    <span class="stat">✎ 7</span>
+                    <span class="stat">◎ 5.4k</span>
+                    <a href="https://x.com/morris_lt/status/2078310163564650800" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:58</div>
+                <div class="tweet-text">对于高成长型的人来说，在X里，最好主动屏蔽掉所有消耗你情绪的内容。因为算法不知道什么对你有价值，它只知道什么能让你停留更久。你不屏蔽、不减少互动，算法就会认为你喜欢，会不断强化推荐给你。愤怒、焦虑、争论，这些内容会不断占据你的注意力，但并不会提升你的能力，也不会增加你的机会。留下那些能够帮助你成长、提升认知、增强能力、拓展资源、为你提供更多选择机会的内容。你的注意力流向哪里，你的人生资产就会积累在哪里。当你的信息环境开始围绕成长和机会运转，你会离钱越来越近。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 155</span>
+                    <span class="stat">⇄ 20</span>
+                    <span class="stat">✎ 11</span>
+                    <span class="stat">◎ 7.0k</span>
+                    <a href="https://x.com/morris_lt/status/2078298395496874366" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:51</div>
+                <div class="tweet-text">当你成为X的创作者，但你收入还不够高的时候，最好的办法是：把推荐信息流里，那些晒马斯克又发工资了的帖子和截图，都点击“对此帖子不感兴趣”。以后就清净了。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 31</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 15</span>
+                    <span class="stat">◎ 4.1k</span>
+                    <a href="https://x.com/morris_lt/status/2078296654521004368" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:42</div>
+                <div class="tweet-text">不要相信所谓的AI排行榜，排行榜都是垂直维度的排名。就如同：在一群帅的人里，找出一个口哨吹的最响人。要看大多数的聪明人都在用哪个AI，这个才是真正的排行榜。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 51</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 17</span>
+                    <span class="stat">◎ 7.8k</span>
+                    <a href="https://x.com/morris_lt/status/2078294224861298811" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div></div><div class="day-panel " id="panel-2026-07-17"><div class="tweet-card">
+                <div class="tweet-time">08:54</div>
+                <div class="tweet-text">我认为，AI不必须在人类的控制之下。而是可以把AI看作一种新加入地球文明的“外星人”。当一种新的智能形式出现时，未来的问题不是谁控制谁，而是人类与AI如何建立共同认可的共识机制。基于这个共识机制，人类与AI共同管理世界、调整秩序，并推动文明持续迭代。人类带来生命体验、价值判断、文化积累和现实感知；AI带来知识整合、推演分析、复杂计算和新的认知能力。双方不是主导与工具的关系，而是在不断交流、验证和迭代中，共同形成更高层次的智能系统。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 39</span>
+                    <span class="stat">⇄ 2</span>
+                    <span class="stat">✎ 68</span>
+                    <span class="stat">◎ 8.6k</span>
+                    <a href="https://x.com/morris_lt/status/2078040524506746928" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">04:59</div>
+                <div class="tweet-text">不要参与市场的情绪，而要理解市场的规律，并保持自己的行为与规律一致。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 152</span>
+                    <span class="stat">⇄ 18</span>
+                    <span class="stat">✎ 57</span>
+                    <span class="stat">◎ 1.3万</span>
+                    <a href="https://x.com/morris_lt/status/2077981407037788229" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">04:49</div>
+                <div class="tweet-text">不管一个博主的“认知”有多高，只要他投资的是A股（他的核心资产配置仍然停留在自己批判的环境里），就说明他的认知和行为都不匹配。他的认知只停留在观点，而不是能力。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 180</span>
+                    <span class="stat">⇄ 11</span>
+                    <span class="stat">✎ 49</span>
+                    <span class="stat">◎ 2.2万</span>
+                    <a href="https://x.com/morris_lt/status/2077979081501728774" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">03:53</div>
+                <div class="tweet-text">对于普通人来说，成长和赚钱是对抗这个糟心世界最好的手段。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 298</span>
+                    <span class="stat">⇄ 24</span>
+                    <span class="stat">✎ 19</span>
+                    <span class="stat">◎ 1.7万</span>
+                    <a href="https://x.com/morris_lt/status/2077964949947924529" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">02:51</div>
+                <div class="tweet-text">X的产品负责人“非常擅长利用人性”，先上线互相关注人的内容激励算法，然后，隔几天开始打击利用互相关注的人。X追求高速迭代，那必然问题众多，人治成为辅助手段。X的策略是：规则不是先设计完整，再让用户适应；而是在用户行为、商业目标、技术能力不断变化中，边运行边调整。结果造成了：大量用户体验类的问题，和长期主义被压制。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 33</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 11</span>
+                    <span class="stat">◎ 8.7k</span>
+                    <a href="https://x.com/morris_lt/status/2077949232477319363" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">02:33</div>
+                <div class="tweet-text">美国中期选举前，不要太操作你的资产。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 216</span>
+                    <span class="stat">⇄ 8</span>
+                    <span class="stat">✎ 90</span>
+                    <span class="stat">◎ 8.8万</span>
+                    <a href="https://x.com/morris_lt/status/2077944813954207768" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">02:02</div>
+                <div class="tweet-text">大陆用用户订阅我X账号无法成功的解决办法：
+
+1、稳定的VPN状态，网页用无痕模式，新登录然后订阅。（这是VPN和支付通道Sprite检测问题）
+2、使用国际支付卡Visa/Mastercard，全币种最佳，港卡、海外最佳。（这是银行卡问题）
+3、在美区的AppleID下，用礼品卡充值Apple余额，进行订阅。（这是绕过银行和网络问题）</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 37</span>
+                    <span class="stat">⇄ 3</span>
+                    <span class="stat">✎ 5</span>
+                    <span class="stat">◎ 1.4万</span>
+                    <a href="https://x.com/morris_lt/status/2077936990465769940" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:30</div>
+                <div class="tweet-text">马斯克刚刚确认，人类奇点正在到来！
+
+1、AI：一周内多家公司接连发布多款新模型，AI 已能自主写代码、优化自身算法，甚至设计芯片。 
+2、机器人：机器人已开始独立完成手术操作，人形机器人如 Optimus 正在快速接近大规模实用阶段。 
+3、太空：同一枚 SpaceX 火箭助推器已重复飞行 36 次，大幅降低发射成本，推动星链和火星计划加速。 
+4、生物科技：AI 辅助下，机器人手术和个性化长寿疗法快速发展，人类寿命有望在未来十年显著延长。 
+5、能源：清洁能源与 AI 优化让电力成本暴跌，为丰裕时代提供几乎无限的能源支撑。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 207</span>
+                    <span class="stat">⇄ 36</span>
+                    <span class="stat">✎ 15</span>
+                    <span class="stat">◎ 3.1万</span>
+                    <a href="https://x.com/morris_lt/status/2077928819923816559" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:24</div>
+                <div class="tweet-text">贫穷不是人格问题，而是约束条件问题；脱贫不是靠说教，而是改变决策环境。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 61</span>
+                    <span class="stat">⇄ 4</span>
+                    <span class="stat">✎ 4</span>
+                    <span class="stat">◎ 8.5k</span>
+                    <a href="https://x.com/morris_lt/status/2077927477197127720" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">01:00</div>
+                <div class="tweet-text">一个现实规律是：进入门槛低的行业，真正做到顶尖的门槛反而极高；而表面门槛高的行业，竞争壁垒反而可能没有想象中那么大。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 224</span>
+                    <span class="stat">⇄ 17</span>
+                    <span class="stat">✎ 14</span>
+                    <span class="stat">◎ 2.0万</span>
+                    <a href="https://x.com/morris_lt/status/2077921433221787797" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">00:59</div>
+                <div class="tweet-text">我有个“缺点”，就是任何需要解决的问题，都会自己去找到答案。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 47</span>
+                    <span class="stat">⇄ 3</span>
+                    <span class="stat">✎ 5</span>
+                    <span class="stat">◎ 7.7k</span>
+                    <a href="https://x.com/morris_lt/status/2077921068900368562" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">00:58</div>
+                <div class="tweet-text">如果1群加过的，别加这个群了~</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 5</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 1</span>
+                    <span class="stat">◎ 3.2k</span>
+                    <a href="https://x.com/morris_lt/status/2077920888557801884" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">00:54</div>
+                <div class="tweet-text">上次的Morris闲聊群1满了，还有待审核的人99+。我今天再开一个2群。讨论的话题还是观察世界、个人成长、投资、创业等话题。大家快加，群满了就关闭。
+<a href="https://t.co/g9pbZ1vCxg" target="_blank" rel="noopener">https://t.co/g9pbZ1vCxg</a></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 17</span>
+                    <span class="stat">⇄ 2</span>
+                    <span class="stat">✎ 22</span>
+                    <span class="stat">◎ 1.7万</span>
+                    <a href="https://x.com/morris_lt/status/2077919727649972402" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">00:40</div>
+                <div class="tweet-text">在X上，简体中文圈的人，除了看成人动作片和沼泽地新闻。其实，绝大多数是不甘于现状，并主动寻求突破的人。他们愿意跳出熟悉的信息环境，接触不同的观点，观察更大的世界。但很多人的问题并不是缺少动力，而是缺少清晰的方向、有效的方法，以及把认知转化为行动的路径。他们已经开始寻找出口，只是还没有找到自己的位置。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 743</span>
+                    <span class="stat">⇄ 45</span>
+                    <span class="stat">✎ 61</span>
+                    <span class="stat">◎ 4.9万</span>
+                    <a href="https://x.com/morris_lt/status/2077916211950797155" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div></div><div class="day-panel " id="panel-2026-07-16"><div class="tweet-card">
+                <div class="tweet-time">11:59</div>
+                <div class="tweet-text">有人私信问我：说自己一直在学习，却依然感到迷茫，没有方向。其实问题往往不是学习得不够多，而是缺少真实世界的反馈。大量输入知识，却很少行动；不断思考未来，却很少进入现实环境验证。没有做过足够多的事情，没有经历足够多的试错，没有获得足够多的反馈，就很难形成属于自己的现实认知。真正的方向不是靠想象出来的，而是在一次次实践、探索和修正中逐渐发现的。行动越多，反馈越丰富，对世界和自己的理解才会越准确。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 228</span>
+                    <span class="stat">⇄ 24</span>
+                    <span class="stat">✎ 73</span>
+                    <span class="stat">◎ 1.7万</span>
+                    <a href="https://x.com/morris_lt/status/2077724845819961479" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">08:14</div>
+                <div class="tweet-text">如果在之前的问答里，我没有回复的，可以私信继续找我询问。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 4</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 1</span>
+                    <span class="stat">◎ 5.5k</span>
+                    <a href="https://x.com/morris_lt/status/2077668295889871231" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">06:50</div>
+                <div class="tweet-text">过去800多天，我持续分享关于世界观察、认知、商业、投资和个人成长的思考。感谢22万关注者一路以来的关注、点赞和支持。未来，我会调整内容结构：
+
+公开内容：看世界正在发生什么，以及我的即时判断。聚焦AI、科技、商业、投资、全球变化等正在发生的重要事件。
+
+订阅内容：看我如何形成判断，以及背后的完整思考系统。深入拆解世界变化、财富增长、个人成长、人生位置、商业逻辑，以及真实案例背后的规律。
+
+------------
+订阅会员可以获得：
+
+1、持续获得《旷野之心》更新版本（长期整理我的公开思想体系）。
+
+2、阅读更多订阅专属深度文章和分析。
+
+3、与我持续交流，讨论个人成长、创业、投资和人生选择。
+
+------------
+订阅内容主要包括：
+
+1、世界观察与趋势分析：分析正在发生的重要变化：发生了什么？为什么现在发生？背后的力量是什么？对个人、创业者、投资者有什么影响？
+
+2、底层规律与认知模型：将财富增长、个人成长、人生位置、商业竞争等问题，结构化为模型、公式和方法。
+
+3、案例研究与战略分析：通过真实案例，分析创业、技术商业化、投资选择、个人发展等问题。例如：《一个普通开发者如何进入全球市场》、《那些炒币的人为什么暴富，又为什么亏光》、《为什么有些暴富的人无法稳定下来》。
+
+4、个人决策与资源支持：分析会员遇到的真实问题，例如：我要不要辞职创业？我要不要出国？资产应该如何配置？我要不要投资某个项目？同时提供全球公司注册、支付收款、税务、法律、海外资源等工具和信息。
+
+------------
+另外，我开放少量「私人认知顾问」服务。
+
+服务对象不是缺少信息的人，而是在事业、创业、投资或人生关键阶段，需要更高质量判断的人。
+
+很多人的问题不是不知道答案，而是在复杂环境中，不知道自己的位置，不知道下一步方向，也不知道如何配置已有资源。
+
+私人认知顾问不是替你做决定，而是在关键节点帮助你梳理问题、分析变量、校准方向。
+
+服务分为三个层级：
+
+位置梳理：$1000+ / 月
+适合个人方向调整，重新梳理经历、能力、资源和目标。
+
+位置战略：$3000+ / 3个月
+适合创业者、投资者和管理者，分析事业、商业和长期路径。
+
+私人认知顾问：$5000+ / 6个月
+长期合作，在重要决策节点提供外部认知支持。
+
+只接受真正希望提升判断力、重新定位自己的人。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 45</span>
+                    <span class="stat">⇄ 3</span>
+                    <span class="stat">✎ 4</span>
+                    <span class="stat">◎ 2.5万</span>
+                    <a href="https://x.com/morris_lt/status/2077646955661115483" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">03:45</div>
+                <div class="tweet-text">每一次时代变革，都会先破坏过去的稳定。多数人看到的是失去，而少数人看到的是重新分配。变化带来的不安，本质上是旧位置正在消失，新位置正在形成。机会永远属于那些迎接变化、适应变化、利用变化的人，而不是试图阻止变化的人。世界改变的时候，真正需要改变的不是时代，而是自己的位置。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 128</span>
+                    <span class="stat">⇄ 22</span>
+                    <span class="stat">✎ 59</span>
+                    <span class="stat">◎ 1.3万</span>
+                    <a href="https://x.com/morris_lt/status/2077600379421007975" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">03:38</div>
+                <div class="tweet-text">市场不缺迎合者，缺的是能够基于判断创造结果的人。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 81</span>
+                    <span class="stat">⇄ 4</span>
+                    <span class="stat">✎ 25</span>
+                    <span class="stat">◎ 1.0万</span>
+                    <a href="https://x.com/morris_lt/status/2077598838458814485" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">03:09</div>
+                <div class="tweet-text">经常有人问我相信”命“吗？我再次解释下：我信命，但首先要理解什么是命。命不是宿命，而是一个人出生时所拥有的一系列初始变量：家庭、环境、时代、资源、性格倾向，以及过去经历共同形成的一种大概率规律。这些变量决定了一个人的起点，也决定了人生早期的大部分可能性。
+
+但命并不是最终结果。因为人在成长过程中，会不断受到自我认知、性格塑造、选择和行动的影响。当一个人开始主动改变自己，不断学习、突破、迭代，让自己变得越来越不同，他就会逐渐改变原本既定的规律。
+
+所以，命是过去所有变量的总和，而运来自于未来的自我创造。
+
+如果一个人始终停留在过去的自己，他的人生大概率会沿着原有轨迹运行；但如果一个人不断重塑自我，让自己成为新的变量，他就有机会改变未来的概率。
+
+命决定你的起点，运决定你的方向。
+
+真正的强者，不是因为没有命的限制，而是在看清自己的命之后，开始创造自己的运。最终，命与运结合，才成为真正的命运。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 401</span>
+                    <span class="stat">⇄ 71</span>
+                    <span class="stat">✎ 74</span>
+                    <span class="stat">◎ 2.5万</span>
+                    <a href="https://x.com/morris_lt/status/2077591441652494404" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">02:59</div>
+                <div class="tweet-text">RT @Morris_LT: @0xRainy7 1、不要急着寻找答案，先进入真实世界。
+2、把时间投入到能长期积累的事情上。
+3、不要单纯的学习，要建立自己的能力闭环(学习、实践、反馈、升级)。
+4、远离比较，找到自己的位置。
+5、不要消耗身体健康，坚持长期主义。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 14</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2077588973762068819" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time">02:59</div>
+                <div class="tweet-text">RT @Morris_LT: @CryptoRGS 因为大多数人一直在寻找一个“被发现的自己”，而不是通过行动创造一个“成为的自己”。</div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 3</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2077588899820658919" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div></div><div class="day-panel " id="panel-2000-01-01"><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2078309954390564874" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2078302575112400974" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2078302010152194253" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2078300013332246883" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2078297338506846510" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2078295433760346471" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2078293376533950482" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2078291423619899610" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2077938748009206051" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2077934678187888966" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2077933646514987238" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2077932656369770865" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2077926674067505633" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2077920609238151317" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2077918978178248921" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2077918479047676238" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2077917180180713633" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2077915032416096606" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2077605229496029265" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2077593021596778669" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2079024146017878349" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2079018598258057605" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2079017997176656109" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2079017320119472627" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2079015860853956756" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2079014018182959340" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2079011209152700683" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2079010694922645671" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2079009891952607419" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2079007660519878721" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2078659039450526130" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2078658437345604046" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2078658175986000229" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2078657418448552380" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2078654628410081569" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2078653500150722606" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2078651543591829921" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2078649982111105276" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2078648368277127345" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2078646174144507986" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2078644414776590664" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2078642383844151551" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div><div class="tweet-card">
+                <div class="tweet-time"></div>
+                <div class="tweet-text"></div>
+                <div class="tweet-stats">
+                    <span class="stat">❤ 0</span>
+                    <span class="stat">⇄ 0</span>
+                    <span class="stat">✎ 0</span>
+                    <span class="stat">◎ 0</span>
+                    <a href="https://x.com/morris_lt/status/2078638514812699062" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
+                </div>
+            </div></div></main>
+</div>
+<div class="footer">自动抓取 · 每日 10:00 更新 · 数据来源 X/Twitter</div>
+<script>
+function switchDate(dateKey) {
+    document.querySelectorAll('.date-item').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.day-panel').forEach(el => el.classList.remove('active'));
+    var item = document.querySelector('.date-item[data-date="' + dateKey + '"]');
+    var panel = document.getElementById('panel-' + dateKey);
+    if (item) item.classList.add('active');
+    if (panel) panel.classList.add('active');
+}
+</script>
+</body>
+</html>
