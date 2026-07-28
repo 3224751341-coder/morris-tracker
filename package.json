@@ -2,7 +2,7 @@
   "name": "morris-tracker",
   "private": true,
   "devDependencies": {
-    "opencli": "^latest",
+    "@jackwener/opencli": "^1.8",
     "wrangler": "^4"
   }
 }

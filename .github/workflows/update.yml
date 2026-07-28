@@ -20,7 +20,7 @@ jobs:
           node-version: 20
 
       - name: Install opencli
-        run: npm install -g opencli
+        run: npm install -g @jackwener/opencli
 
       - name: Setup Python
         uses: actions/setup-python@v5
