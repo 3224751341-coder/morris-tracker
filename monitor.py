@@ -114,13 +114,15 @@ def main():
     deploy()
 
 def parse_date(date_str):
-    """解析 Twitter 日期格式 (可能有或没有年份)"""
+    """解析 Twitter 日期格式 — 同时支持 opencli (%a %b %d ... +0000 %Y) 和 Nitter RSS (%a, %d %b %Y ... GMT)"""
     if not date_str:
         return datetime(2000, 1, 1, tzinfo=timezone.utc)
-    for fmt in ("%a %b %d %H:%M:%S %z %Y", "%a %b %d %H:%M:%S %z"):
+    # 统一时区后缀: GMT/UTC → +0000 让 %z 能解析
+    cleaned = date_str.strip()
+    cleaned = cleaned.replace(" GMT", " +0000").replace(" UTC", " +0000")
+    for fmt in ("%a %b %d %H:%M:%S %z %Y", "%a %b %d %H:%M:%S %z", "%a, %d %b %Y %H:%M:%S %z"):
         try:
-            dt = datetime.strptime(date_str.strip(), fmt)
-            # 无年份时用当前年份
+            dt = datetime.strptime(cleaned, fmt)
             if dt.year == 1900:
                 dt = dt.replace(year=datetime.now().year)
             return dt
