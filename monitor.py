@@ -108,6 +108,18 @@ def main():
             db["tweets"][tid] = t
             new_count += 1
 
+    # 清理历史空数据
+    cleaned = 0
+    for tid in list(db["tweets"].keys()):
+        t = db["tweets"][tid]
+        text = (t.get("text") or "").strip()
+        date = t.get("created_at") or ""
+        if not text or not date:
+            del db["tweets"][tid]
+            cleaned += 1
+    if cleaned:
+        print(f"清理 {cleaned} 条空数据")
+
     save_db(db)
     print(f"新增 {new_count} 条，共 {len(db['tweets'])} 条")
     generate_html(db)
@@ -179,7 +191,8 @@ def generate_html(db):
             views = t.get("views", 0) or 0
             tid = t.get("id", "")
             tweet_url = f"https://x.com/{USERNAME}/status/{tid}" if tid else "#"
-            time_str = (t.get("created_at", "")[11:16] or "") if t.get("created_at") else ""
+            t_dt = parse_date(t.get("created_at", ""))
+            time_str = t_dt.strftime("%H:%M") if t_dt.year != 2000 else ""
             cards += f"""<div class="tweet-card">
                 <div class="tweet-time">{time_str}</div>
                 <div class="tweet-text">{text}</div>
