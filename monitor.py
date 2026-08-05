@@ -1,38 +1,46 @@
 #!/usr/bin/env python3
-"""Morris 推文追踪 · 每天10:00抓取前一天内容"""
+"""认知博主推文追踪 · 多博主 · 每天10:00抓取前一天内容"""
 import json, os, subprocess, sys
 from datetime import datetime, timezone, timedelta
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_FILE = os.path.join(PROJECT_DIR, "data", "tweets.json")
 HTML_FILE = os.path.join(PROJECT_DIR, "index.html")
-USERNAME = "morris_lt"
+
+# 博主配置：handle = X 账号，name = 展示名，desc = 一句话定位
+USERS = [
+    {"handle": "morris_lt",  "name": "Morris", "desc": "认知 / AI / 财富哲学"},
+    {"handle": "svwang1",    "name": "王川",   "desc": "位置论 / 投资认知"},
+    {"handle": "wadezone",   "name": "Koda",   "desc": "个人成长 / 赚钱方法论"},
+    {"handle": "lxfater",    "name": "铁锤人", "desc": "AI 创业 / 行动派"},
+]
+USER_BY_HANDLE = {u["handle"]: u for u in USERS}
 BJ = timezone(timedelta(hours=8))
 
-def fetch_tweets(limit=50):
-    """抓取用户推文 — 三层兜底：opencli → Nitter RSS → Playwright"""
+def fetch_tweets(username, limit=50):
+    """抓取某用户推文 — 三层兜底：opencli → Nitter RSS → Playwright"""
     # Tier 1: opencli (local Mac with Chrome extension)
     try:
         result = subprocess.run(
-            ["opencli", "twitter", "tweets", USERNAME, "--limit", str(limit), "-f", "json",
+            ["opencli", "twitter", "tweets", username, "--limit", str(limit), "-f", "json",
              "--window", "background", "--keep-tab", "false"],
             capture_output=True, text=True, timeout=60
         )
         if result.returncode == 0:
             data = json.loads(result.stdout)
             if isinstance(data, list) and len(data) > 0:
-                print(f"opencli 抓取成功: {len(data)} 条")
+                print(f"[{username}] opencli 抓取成功: {len(data)} 条")
                 return data
     except:
         pass
 
     # Tier 2: Nitter RSS (cloud, no auth needed)
     import urllib.request, html as html_mod, re
-    nitter_url = f"https://nitter.net/{USERNAME}/rss"
-    print(f"Nitter RSS: {nitter_url}")
+    nitter_url = f"https://nitter.net/{username}/rss"
+    print(f"[{username}] Nitter RSS: {nitter_url}")
     try:
         req = urllib.request.Request(nitter_url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=20) as resp:
             xml = resp.read().decode("utf-8")
         items = re.findall(r"<item>(.*?)</item>", xml, re.DOTALL)
         if items:
@@ -45,42 +53,54 @@ def fetch_tweets(limit=50):
                     tid_m = re.search(r"/status/(\d+)", m_link.group(1))
                     tweets.append({
                         "id": tid_m.group(1) if tid_m else "",
+                        "author": username,
+                        "name": USER_BY_HANDLE.get(username, {}).get("name", username),
                         "text": html_mod.unescape(m_title.group(1)).strip(),
                         "created_at": m_date.group(1).strip(),
                         "likes": 0, "retweets": 0, "replies": 0, "views": 0,
-                        "url": f"https://x.com/{USERNAME}/status/{tid_m.group(1)}" if tid_m else "",
+                        "url": f"https://x.com/{username}/status/{tid_m.group(1)}" if tid_m else "",
                         "captured_at": datetime.now(BJ).strftime("%Y-%m-%d %H:%M"),
                     })
-            print(f"Nitter RSS 抓取成功: {len(tweets)} 条")
+            print(f"[{username}] Nitter RSS 抓取成功: {len(tweets)} 条")
             return tweets
-        print("Nitter RSS 无内容")
+        print(f"[{username}] Nitter RSS 无内容")
     except Exception as e:
-        print(f"Nitter RSS 失败: {e}")
+        print(f"[{username}] Nitter RSS 失败: {e}")
 
     # Tier 3: Playwright headless (last resort, needs cookies)
-    print("尝试 Playwright 浏览器抓取...")
+    print(f"[{username}] 尝试 Playwright 浏览器抓取...")
     try:
         result = subprocess.run(
-            [sys.executable, os.path.join(PROJECT_DIR, "fetch_x.py"), USERNAME, str(limit)],
+            [sys.executable, os.path.join(PROJECT_DIR, "fetch_x.py"), username, str(limit)],
             capture_output=True, text=True, timeout=90
         )
         if result.stderr:
-            print(f"Playwright 日志:\n{result.stderr[:500]}")
+            print(f"[{username}] Playwright 日志:\n{result.stderr[:300]}")
         if result.returncode == 0:
             data = json.loads(result.stdout)
             if isinstance(data, list):
-                print(f"Playwright 抓取成功: {len(data)} 条")
+                print(f"[{username}] Playwright 抓取成功: {len(data)} 条")
                 return data
     except Exception as e:
-        print(f"Playwright 异常: {e}")
+        print(f"[{username}] Playwright 异常: {e}")
 
     return []
 
 def load_db():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE) as f:
-            return json.load(f)
-    return {"tweets": {}, "last_fetch": None}
+            db = json.load(f)
+        # 旧格式迁移：{"tweets": {...}} → {"users": {"morris_lt": {"tweets": {...}}}}
+        if "tweets" in db and isinstance(db["tweets"], dict):
+            print("检测到旧格式数据，迁移到 users 结构...")
+            db = {
+                "users": {USERS[0]["handle"]: {"tweets": db["tweets"]}},
+                "last_fetch": db.get("last_fetch"),
+            }
+        if "users" not in db:
+            db["users"] = {}
+        return db
+    return {"users": {}, "last_fetch": None}
 
 def save_db(db):
     db["last_fetch"] = datetime.now(BJ).strftime("%Y-%m-%d %H:%M")
@@ -88,40 +108,48 @@ def save_db(db):
         json.dump(db, f, ensure_ascii=False, indent=2)
 
 def main():
-    print(f"[{datetime.now(BJ).strftime('%Y-%m-%d %H:%M')}] 抓取 @{USERNAME}...")
-    tweets = fetch_tweets(50)
-    if not tweets:
-        print("无新推文")
-        return
-
+    now = datetime.now(BJ).strftime("%Y-%m-%d %H:%M")
     db = load_db()
-    new_count = 0
-    for t in tweets:
-        tid = str(t.get("id", ""))
-        if tid and tid not in db["tweets"]:
-            # 过滤无效推文：无文本或无日期的不入库
-            text = (t.get("text") or "").strip()
-            date = t.get("created_at") or ""
-            if not text or not date:
-                continue
-            t["captured_at"] = datetime.now(BJ).strftime("%Y-%m-%d %H:%M")
-            db["tweets"][tid] = t
-            new_count += 1
+    # 确保每个博主都有结构
+    for u in USERS:
+        if u["handle"] not in db["users"]:
+            db["users"][u["handle"]] = {"tweets": {}}
 
-    # 清理历史空数据
-    cleaned = 0
-    for tid in list(db["tweets"].keys()):
-        t = db["tweets"][tid]
-        text = (t.get("text") or "").strip()
-        date = t.get("created_at") or ""
-        if not text or not date:
-            del db["tweets"][tid]
-            cleaned += 1
-    if cleaned:
-        print(f"清理 {cleaned} 条空数据")
+    total_new = 0
+    for u in USERS:
+        handle = u["handle"]
+        print(f"[{now}] 抓取 @{handle} ({u['name']})...")
+        tweets = fetch_tweets(handle, 50)
+        if not tweets:
+            print(f"[{handle}] 无新推文")
+            continue
+        tweets_map = db["users"][handle]["tweets"]
+        new_count = 0
+        for t in tweets:
+            tid = str(t.get("id", ""))
+            if tid and tid not in tweets_map:
+                # 过滤无效推文：无文本或无日期的不入库
+                text = (t.get("text") or "").strip()
+                date = t.get("created_at") or ""
+                if not text or not date:
+                    continue
+                t["captured_at"] = datetime.now(BJ).strftime("%Y-%m-%d %H:%M")
+                tweets_map[tid] = t
+                new_count += 1
+        # 清理历史空数据
+        cleaned = 0
+        for tid in list(tweets_map.keys()):
+            t = tweets_map[tid]
+            if not (t.get("text") or "").strip() or not (t.get("created_at") or ""):
+                del tweets_map[tid]
+                cleaned += 1
+        if cleaned:
+            print(f"[{handle}] 清理 {cleaned} 条空数据")
+        total_new += new_count
+        print(f"[{handle}] 新增 {new_count} 条，累计 {len(tweets_map)} 条")
 
     save_db(db)
-    print(f"新增 {new_count} 条，共 {len(db['tweets'])} 条")
+    print(f"本轮共新增 {total_new} 条")
     generate_html(db)
     deploy()
 
@@ -143,57 +171,62 @@ def parse_date(date_str):
     return datetime(2000, 1, 1, tzinfo=timezone.utc)
 
 def generate_html(db):
-    tweets = sorted(db["tweets"].values(), key=lambda t: parse_date(t.get("created_at", "")), reverse=True)
-
-    # Group by YYYY-MM-DD (properly parsed, not raw string prefix)
-    by_date = {}
-    for t in tweets:
-        dt = parse_date(t.get("created_at", ""))
-        date_key = dt.strftime("%Y-%m-%d")
-        if date_key not in by_date:
-            by_date[date_key] = {"dt": dt, "tweets": []}
-        by_date[date_key]["tweets"].append(t)
-
+    import re
     now_str = datetime.now(BJ).strftime("%Y-%m-%d %H:%M")
-    total = len(tweets)
-    days = len(by_date)
+    total_all = 0
 
-    # Sort dates chronologically (newest first)
-    sorted_dates = sorted(by_date.keys(), reverse=True)
-
-    # Build sidebar items
+    # ── 博主 Tab + 侧边栏日期项 + 内容面板 ──
+    tabs = ""
     sidebar_items = ""
-    for i, date_key in enumerate(sorted_dates):
-        group = by_date[date_key]
-        dt = group["dt"]
-        count = len(group["tweets"])
-        weekday = ["日","一","二","三","四","五","六"][int(dt.strftime("%w"))]
-        date_display = f'{dt.strftime("%m月%d日")} <span class="wk">周{weekday}</span>'
-        active = "active" if i == 0 else ""
-        sidebar_items += f"""<div class="date-item {active}" data-date="{date_key}" onclick="switchDate('{date_key}')">
-            <span class="date-label">{date_display}</span>
-            <span class="date-count">{count}</span>
-        </div>"""
-
-    # Build content panels
     content_panels = ""
-    for i, date_key in enumerate(sorted_dates):
-        group = by_date[date_key]
-        active = "active" if i == 0 else ""
-        cards = ""
-        for t in group["tweets"]:
-            text = (t.get("text", "") or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            import re
-            text = re.sub(r'(https?://\S+)', r'<a href="\1" target="_blank" rel="noopener">\1</a>', text)
-            likes = t.get("likes", 0) or 0
-            retweets = t.get("retweets", 0) or 0
-            replies = t.get("replies", 0) or 0
-            views = t.get("views", 0) or 0
-            tid = t.get("id", "")
-            tweet_url = f"https://x.com/{USERNAME}/status/{tid}" if tid else "#"
-            t_dt = parse_date(t.get("created_at", ""))
-            time_str = t_dt.strftime("%H:%M") if t_dt.year != 2000 else ""
-            cards += f"""<div class="tweet-card">
+    for idx, u in enumerate(USERS):
+        handle = u["handle"]
+        tweets_map = db.get("users", {}).get(handle, {}).get("tweets", {})
+        tweets = sorted(tweets_map.values(), key=lambda t: parse_date(t.get("created_at", "")), reverse=True)
+        total_all += len(tweets)
+
+        # 按日期分组
+        by_date = {}
+        for t in tweets:
+            dt = parse_date(t.get("created_at", ""))
+            date_key = dt.strftime("%Y-%m-%d")
+            if date_key not in by_date:
+                by_date[date_key] = {"dt": dt, "tweets": []}
+            by_date[date_key]["tweets"].append(t)
+        sorted_dates = sorted(by_date.keys(), reverse=True)
+
+        tab_active = "active" if idx == 0 else ""
+        tabs += f"""<div class="user-tab {tab_active}" data-user="{handle}" onclick="switchUser('{handle}')">
+                <span class="user-name">{u['name']}</span>
+                <span class="user-count">{len(tweets)}</span>
+            </div>"""
+
+        for i, date_key in enumerate(sorted_dates):
+            group = by_date[date_key]
+            dt = group["dt"]
+            count = len(group["tweets"])
+            weekday = ["日","一","二","三","四","五","六"][int(dt.strftime("%w"))]
+            date_display = f'{dt.strftime("%m月%d日")} <span class="wk">周{weekday}</span>'
+            hidden = ' style="display:none"' if idx != 0 else ""
+            active = "active" if idx == 0 and i == 0 else ""
+            sidebar_items += f"""<div class="date-item {active}" data-user="{handle}" data-date="{date_key}" onclick="switchDate('{handle}','{date_key}')"{hidden}>
+                <span class="date-label">{date_display}</span>
+                <span class="date-count">{count}</span>
+            </div>"""
+
+            cards = ""
+            for t in group["tweets"]:
+                text = (t.get("text", "") or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                text = re.sub(r'(https?://\S+)', r'<a href="\1" target="_blank" rel="noopener">\1</a>', text)
+                likes = t.get("likes", 0) or 0
+                retweets = t.get("retweets", 0) or 0
+                replies = t.get("replies", 0) or 0
+                views = t.get("views", 0) or 0
+                tid = t.get("id", "")
+                tweet_url = f"https://x.com/{handle}/status/{tid}" if tid else "#"
+                t_dt = parse_date(t.get("created_at", ""))
+                time_str = t_dt.strftime("%H:%M") if t_dt.year != 2000 else ""
+                cards += f"""<div class="tweet-card">
                 <div class="tweet-time">{time_str}</div>
                 <div class="tweet-text">{text}</div>
                 <div class="tweet-stats">
@@ -204,14 +237,15 @@ def generate_html(db):
                     <a href="{tweet_url}" target="_blank" rel="noopener" class="tweet-link">原文 →</a>
                 </div>
             </div>"""
-        content_panels += f"""<div class="day-panel {active}" id="panel-{date_key}">{cards}</div>"""
+            panel_active = "active" if idx == 0 and i == 0 else ""
+            content_panels += f"""<div class="day-panel {panel_active}" id="panel-{handle}-{date_key}">{cards}</div>"""
 
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Morris 推文时间轴</title>
+<title>认知博主时间轴</title>
 <style>
 :root{{
     --bg:#faf9f5;
@@ -234,10 +268,31 @@ body{{
 }}
 header{{
     background: linear-gradient(135deg, #1c1917 0%, #292524 100%);
-    color: #fff; padding: 28px 24px; text-align: center;
+    color: #fff; padding: 26px 24px 20px; text-align: center;
 }}
 header h1{{ font-size: 20px; font-weight: 700; letter-spacing: -.02em; }}
 header .sub{{ font-size: 12px; opacity: .55; margin-top: 4px; }}
+/* ── User Tabs ── */
+.user-tabs{{
+    display: flex; justify-content: center; gap: 8px; margin-top: 16px; flex-wrap: wrap;
+}}
+.user-tab{{
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 16px; border-radius: 999px; cursor: pointer;
+    background: rgba(255,255,255,.08); color: #e7e5e4;
+    font-size: 14px; font-weight: 600; user-select: none;
+    transition: background .2s var(--ease);
+}}
+.user-tab:hover{{ background: rgba(255,255,255,.16); }}
+.user-tab.active{{
+    background: var(--amber); color: #fff;
+}}
+.user-count{{
+    font-size: 11px; font-weight: 400; opacity: .75;
+    background: rgba(0,0,0,.15); padding: 1px 8px; border-radius: 8px;
+    font-variant-numeric: tabular-nums;
+}}
+.user-tab.active .user-count{{ background: rgba(0,0,0,.2); }}
 /* ── Layout ── */
 .layout{{
     display: grid;
@@ -297,14 +352,6 @@ header .sub{{ font-size: 12px; opacity: .55; margin-top: 4px; }}
     text-decoration: none; margin-left: auto; transition: opacity .2s;
 }}
 .tweet-link:hover{{ opacity: .7; text-decoration: none; }}
-/* ── Stats bar ── */
-.stats{{ display: flex; gap: 12px; margin: 20px 0; }}
-.stat-card{{
-    flex: 1; background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 14px; text-align: center;
-}}
-.stat-card .num{{ font-size: 26px; font-weight: 700; color: var(--amber); font-variant-numeric: tabular-nums; }}
-.stat-card .label{{ font-size: 11px; color: var(--ink-soft); margin-top: 2px; }}
 .footer{{ text-align: center; color: var(--ink-soft); font-size: 11px; margin-top: 48px; }}
 /* ── Empty state ── */
 .empty{{ text-align: center; padding: 60px 20px; color: var(--ink-soft); }}
@@ -325,8 +372,9 @@ header .sub{{ font-size: 12px; opacity: .55; margin-top: 4px; }}
 </head>
 <body>
 <header>
-    <h1>Morris 推文时间轴</h1>
-    <div class="sub">@{USERNAME} · 追踪 {days} 天 {total} 条 · 更新于 {now_str}</div>
+    <h1>认知博主时间轴</h1>
+    <div class="sub">{len(USERS)} 位博主 · {total_all} 条推文 · 更新于 {now_str}</div>
+    <nav class="user-tabs">{tabs}</nav>
 </header>
 <div class="layout">
     <nav class="sidebar">{sidebar_items}</nav>
@@ -334,14 +382,23 @@ header .sub{{ font-size: 12px; opacity: .55; margin-top: 4px; }}
 </div>
 <div class="footer">自动抓取 · 每日 10:00 更新 · 数据来源 X/Twitter</div>
 <script>
-function switchDate(dateKey) {{
-    document.querySelectorAll('.date-item').forEach(el => el.classList.remove('active'));
+function switchUser(user) {{
+    document.querySelectorAll('.user-tab').forEach(el => el.classList.toggle('active', el.dataset.user === user));
+    document.querySelectorAll('.date-item').forEach(el => {{
+        el.style.display = (el.dataset.user === user) ? '' : 'none';
+    }});
+    var first = document.querySelector('.date-item[data-user="' + user + '"]');
+    switchDate(user, first ? first.dataset.date : '');
+}}
+function switchDate(user, date) {{
+    document.querySelectorAll('.date-item[data-user="' + user + '"]').forEach(el => el.classList.remove('active'));
     document.querySelectorAll('.day-panel').forEach(el => el.classList.remove('active'));
-    var item = document.querySelector('.date-item[data-date="' + dateKey + '"]');
-    var panel = document.getElementById('panel-' + dateKey);
+    var item = document.querySelector('.date-item[data-user="' + user + '"][data-date="' + date + '"]');
+    var panel = document.getElementById('panel-' + user + '-' + date);
     if (item) item.classList.add('active');
     if (panel) panel.classList.add('active');
 }}
+switchUser('{USERS[0]["handle"]}');
 </script>
 </body>
 </html>"""
