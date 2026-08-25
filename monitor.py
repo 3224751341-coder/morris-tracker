@@ -32,18 +32,26 @@ NITTER_INSTANCES = [
     "https://nitter.space",
 ]
 
-def _http_get(url, timeout=20, headers=None):
-    """统一 HTTP GET（返回解码后的文本）"""
-    import urllib.request
+def _http_get(url, timeout=20, headers=None, retries=2):
+    """统一 HTTP GET（返回解码后的文本），失败自动重试"""
+    import urllib.request, time
     h = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9",
     }
     if headers:
         h.update(headers)
-    req = urllib.request.Request(url, headers=h)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return resp.read().decode("utf-8", "ignore")
+    last_err = None
+    for i in range(retries + 1):
+        try:
+            req = urllib.request.Request(url, headers=h)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read().decode("utf-8", "ignore")
+        except Exception as e:
+            last_err = e
+            if i < retries:
+                time.sleep(2)
+    raise last_err
 
 def fetch_tweets(username, limit=50):
     """抓取某用户推文 — 多层兜底：opencli → Nitter多实例 → r.jina.ai → twstalker → x.com SSR → Playwright"""
@@ -62,23 +70,23 @@ def fetch_tweets(username, limit=50):
     except:
         pass
 
-    # Tier 2: Nitter RSS 多实例轮询
+    # Tier 2: x.com 官方页 SSR（官方源、带互动数据、2026-08 实测可用）
+    tweets = fetch_x_ssr(username, limit)
+    if tweets:
+        return tweets
+
+    # Tier 3: Nitter RSS 多实例轮询
     tweets = fetch_nitter_rss(username, limit)
     if tweets:
         return tweets
 
-    # Tier 3: r.jina.ai reader（AI 网页读取代理，无需登录）
+    # Tier 4: r.jina.ai reader（AI 网页读取代理，无需登录）
     tweets = fetch_jina(username, limit)
     if tweets:
         return tweets
 
-    # Tier 4: twstalker 镜像站 HTML
+    # Tier 5: twstalker 镜像站 HTML
     tweets = fetch_twstalker(username, limit)
-    if tweets:
-        return tweets
-
-    # Tier 5: x.com 官方页 SSR JSON（__NEXT_DATA__）
-    tweets = fetch_x_ssr(username, limit)
     if tweets:
         return tweets
 
@@ -245,61 +253,60 @@ def _parse_twstalker_date(s):
     return f"{m.group(1)} {int(m.group(2)):02d} 00:00:00 +0000 {m.group(3)}"
 
 def fetch_x_ssr(username, limit=50):
-    """x.com 官方页 SSR — 解析 __NEXT_DATA__ 里的推文 JSON"""
-    import json, re
+    """x.com 官方页 SSR — 解析 relay 缓存格式（2026 新版为 TweetPreview 对象，含完整互动数据）"""
+    import re, json
     try:
-        html = _http_get(f"https://x.com/{username}", timeout=25,
-                         headers={"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"})
+        page = _http_get(f"https://x.com/{username}", timeout=40,
+                         headers={"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                                  "Accept-Language": "en-US,en;q=0.9"})
     except Exception as e:
         print(f"    x.com SSR → 失败: {str(e)[:80]}")
         return []
-    m = re.search(r'<script id="__NEXT_DATA__" type="application/json"[^>]*>(.*?)</script>', html, re.DOTALL)
-    if not m:
-        print(f"    x.com SSR → 未找到 __NEXT_DATA__（{len(html)}B）")
+    if "TweetPreview" not in page or "created_at" not in page:
+        print(f"    x.com SSR → 页面无推文数据（{len(page)}B）")
         return []
-    try:
-        data = json.loads(m.group(1))
-    except Exception as e:
-        print(f"    x.com SSR → JSON 解析失败: {e}")
-        return []
-    found = []
-    def walk(o):
-        if isinstance(o, dict):
-            if "id_str" in o and "full_text" in o and "created_at" in o:
-                found.append(o)
-            for v in o.values():
-                walk(v)
-        elif isinstance(o, list):
-            for v in o:
-                walk(v)
-    walk(data)
-    uniq = {}
-    for t in found:
-        uniq[t["id_str"]] = t
-    found = list(uniq.values())
-    found.sort(key=lambda t: t.get("created_at", ""), reverse=True)
     tweets = []
-    for t in found[:limit]:
-        views = t.get("views")
-        views_n = views.get("count") if isinstance(views, dict) else views
+    seen = set()
+    # 每条推文对象内 text 后紧跟 created_at；rest_id/互动数据在其前方
+    for m in re.finditer(r'text:"((?:[^"\\]|\\.)*?)",created_at:"([^"]+)"', page):
+        text_raw, created_at = m.group(1), m.group(2)
+        head = page[max(0, m.start() - 2000):m.start()]
+        ids = re.findall(r'rest_id:"(\d+)"', head)
+        if not ids:
+            continue
+        tid = ids[-1]
+        if tid in seen:
+            continue
+        seen.add(tid)
+        try:
+            text = json.loads('"' + text_raw + '"')
+        except Exception:
+            text = text_raw.replace("\\n", "\n").replace("\\t", "\t")
+        text = text.strip()
+        if not text:
+            continue
+        favs = re.findall(r'favorite_count:(\d+)', head)
+        rts = re.findall(r'retweet_count:(\d+)', head)
+        rps = re.findall(r'reply_count:(\d+)', head)
         tweets.append({
-            "id": str(t["id_str"]),
+            "id": tid,
             "author": username,
             "name": USER_BY_HANDLE.get(username, {}).get("name", username),
-            "text": (t.get("full_text") or "").strip(),
-            "created_at": t.get("created_at", ""),
-            "likes": t.get("favorite_count") or 0,
-            "retweets": t.get("retweet_count") or 0,
-            "replies": t.get("reply_count") or 0,
-            "views": views_n or 0,
-            "url": f"https://x.com/{username}/status/{t['id_str']}",
+            "text": text,
+            "created_at": created_at,
+            "likes": int(favs[-1]) if favs else 0,
+            "retweets": int(rts[-1]) if rts else 0,
+            "replies": int(rps[-1]) if rps else 0,
+            "views": 0,
+            "url": f"https://x.com/{username}/status/{tid}",
             "captured_at": datetime.now(BJ).strftime("%Y-%m-%d %H:%M"),
         })
-    tweets = [t for t in tweets if t["id"] and t["text"] and t["created_at"]]
+        if len(tweets) >= limit:
+            break
     if tweets:
         print(f"    x.com SSR → OK {len(tweets)} 条")
     else:
-        print(f"    x.com SSR → 找到 {len(found)} 条但字段不全")
+        print(f"    x.com SSR → 解析 0 条（页面 {len(page)}B）")
     return tweets
 
 def load_db():
