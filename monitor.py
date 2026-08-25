@@ -17,9 +17,37 @@ USERS = [
 USER_BY_HANDLE = {u["handle"]: u for u in USERS}
 BJ = timezone(timedelta(hours=8))
 
+# Nitter 实例列表（nitter.net 2026-08 起对云端 IP 返回 403，轮询备用实例）
+NITTER_INSTANCES = [
+    "https://nitter.net",
+    "https://nitter.tiekoetter.com",
+    "https://nitter.poast.org",
+    "https://nitter.privacyredirect.com",
+    "https://nitter.1d4.us",
+    "https://nitter.kavin.rocks",
+    "https://nitter.unixfox.eu",
+    "https://nitter.bird.fan",
+    "https://nitter.pussthecat.org",
+    "https://nitter.mint.lgbt",
+    "https://nitter.space",
+]
+
+def _http_get(url, timeout=20, headers=None):
+    """统一 HTTP GET（返回解码后的文本）"""
+    import urllib.request
+    h = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    if headers:
+        h.update(headers)
+    req = urllib.request.Request(url, headers=h)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read().decode("utf-8", "ignore")
+
 def fetch_tweets(username, limit=50):
-    """抓取某用户推文 — 三层兜底：opencli → Nitter RSS → Playwright"""
-    # Tier 1: opencli (local Mac with Chrome extension)
+    """抓取某用户推文 — 多层兜底：opencli → Nitter多实例 → r.jina.ai → twstalker → x.com SSR → Playwright"""
+    # Tier 1: opencli (local Mac with Chrome extension, 完整互动数据)
     try:
         result = subprocess.run(
             ["opencli", "twitter", "tweets", username, "--limit", str(limit), "-f", "json",
@@ -34,40 +62,27 @@ def fetch_tweets(username, limit=50):
     except:
         pass
 
-    # Tier 2: Nitter RSS (cloud, no auth needed)
-    import urllib.request, html as html_mod, re
-    nitter_url = f"https://nitter.net/{username}/rss"
-    print(f"[{username}] Nitter RSS: {nitter_url}")
-    try:
-        req = urllib.request.Request(nitter_url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            xml = resp.read().decode("utf-8")
-        items = re.findall(r"<item>(.*?)</item>", xml, re.DOTALL)
-        if items:
-            tweets = []
-            for item in items:
-                m_title = re.search(r"<title>(.*?)</title>", item, re.DOTALL)
-                m_date = re.search(r"<pubDate>(.*?)</pubDate>", item)
-                m_link = re.search(r"<link>(.*?)</link>", item)
-                if m_title and m_date and m_link:
-                    tid_m = re.search(r"/status/(\d+)", m_link.group(1))
-                    tweets.append({
-                        "id": tid_m.group(1) if tid_m else "",
-                        "author": username,
-                        "name": USER_BY_HANDLE.get(username, {}).get("name", username),
-                        "text": html_mod.unescape(m_title.group(1)).strip(),
-                        "created_at": m_date.group(1).strip(),
-                        "likes": 0, "retweets": 0, "replies": 0, "views": 0,
-                        "url": f"https://x.com/{username}/status/{tid_m.group(1)}" if tid_m else "",
-                        "captured_at": datetime.now(BJ).strftime("%Y-%m-%d %H:%M"),
-                    })
-            print(f"[{username}] Nitter RSS 抓取成功: {len(tweets)} 条")
-            return tweets
-        print(f"[{username}] Nitter RSS 无内容")
-    except Exception as e:
-        print(f"[{username}] Nitter RSS 失败: {e}")
+    # Tier 2: Nitter RSS 多实例轮询
+    tweets = fetch_nitter_rss(username, limit)
+    if tweets:
+        return tweets
 
-    # Tier 3: Playwright headless (last resort, needs cookies)
+    # Tier 3: r.jina.ai reader（AI 网页读取代理，无需登录）
+    tweets = fetch_jina(username, limit)
+    if tweets:
+        return tweets
+
+    # Tier 4: twstalker 镜像站 HTML
+    tweets = fetch_twstalker(username, limit)
+    if tweets:
+        return tweets
+
+    # Tier 5: x.com 官方页 SSR JSON（__NEXT_DATA__）
+    tweets = fetch_x_ssr(username, limit)
+    if tweets:
+        return tweets
+
+    # Tier 6: Playwright headless (last resort, needs cookies)
     print(f"[{username}] 尝试 Playwright 浏览器抓取...")
     try:
         result = subprocess.run(
@@ -85,6 +100,207 @@ def fetch_tweets(username, limit=50):
         print(f"[{username}] Playwright 异常: {e}")
 
     return []
+
+def fetch_nitter_rss(username, limit=50):
+    """Nitter RSS — 多个实例逐个轮询，跳过反爬验证页"""
+    import re, html as html_mod
+    for base in NITTER_INSTANCES:
+        try:
+            xml = _http_get(f"{base}/{username}/rss", timeout=15)
+        except Exception as e:
+            print(f"    Nitter {base} → 失败: {str(e)[:80]}")
+            continue
+        low = xml.lower()
+        if any(k in low for k in ("not a bot", "anubis", "captcha", "cloudflare", "js-challenge", "verify")):
+            print(f"    Nitter {base} → 反爬验证页，跳过")
+            continue
+        items = re.findall(r"<item>(.*?)</item>", xml, re.DOTALL)
+        if not items:
+            print(f"    Nitter {base} → RSS 无条目")
+            continue
+        tweets = []
+        for item in items:
+            m_title = re.search(r"<title>(.*?)</title>", item, re.DOTALL)
+            m_date = re.search(r"<pubDate>(.*?)</pubDate>", item)
+            m_link = re.search(r"<link>(.*?)</link>", item)
+            if not (m_title and m_date and m_link):
+                continue
+            tid_m = re.search(r"/status/(\d+)", m_link.group(1))
+            tid = tid_m.group(1) if tid_m else ""
+            tweets.append({
+                "id": tid,
+                "author": username,
+                "name": USER_BY_HANDLE.get(username, {}).get("name", username),
+                "text": html_mod.unescape(m_title.group(1)).strip(),
+                "created_at": m_date.group(1).strip(),
+                "likes": 0, "retweets": 0, "replies": 0, "views": 0,
+                "url": f"https://x.com/{username}/status/{tid}" if tid else "",
+                "captured_at": datetime.now(BJ).strftime("%Y-%m-%d %H:%M"),
+            })
+        tweets = [t for t in tweets if t["id"] and t["text"] and t["created_at"]]
+        if tweets:
+            print(f"    Nitter {base} → OK {len(tweets)} 条")
+            return tweets
+        print(f"    Nitter {base} → 条目无效")
+    return []
+
+def fetch_jina(username, limit=50):
+    """r.jina.ai reader — 真实浏览器渲染 X 页面，无需登录"""
+    import re
+    try:
+        md = _http_get(f"https://r.jina.ai/https://x.com/{username}", timeout=45,
+                       headers={"X-Return-Format": "markdown", "Accept": "text/markdown"})
+    except Exception as e:
+        print(f"    r.jina.ai → 失败: {str(e)[:80]}")
+        return []
+    if len(md) < 200 or ("status/" not in md and "x.com" not in md):
+        print(f"    r.jina.ai → 无推文内容（{len(md)}B）")
+        return []
+    ids = re.findall(rf"(?:x|twitter)\.com/{username}/status/(\d+)", md)
+    if not ids:
+        print(f"    r.jina.ai → 未找到推文链接（{len(md)}B）")
+        return []
+    tweets = []
+    seen = set()
+    # 按 id 出现位置切分文本块：每个 id 取其后一段文本作为正文
+    for m in re.finditer(rf"(?:x|twitter)\.com/{username}/status/(\d+)", md):
+        tid = m.group(1)
+        if tid in seen:
+            continue
+        seen.add(tid)
+        chunk = md[m.end():m.end() + 400]
+        text = re.sub(r"\s+", " ", chunk).strip()
+        text = text.split("x.com")[0].split("twitter.com")[0].strip()[:280]
+        if not text:
+            continue
+        tweets.append({
+            "id": tid,
+            "author": username,
+            "name": USER_BY_HANDLE.get(username, {}).get("name", username),
+            "text": text,
+            "created_at": "",  # jina 返回相对时间，无法确定绝对时间，靠 date 缺省避免入库
+            "likes": 0, "retweets": 0, "replies": 0, "views": 0,
+            "url": f"https://x.com/{username}/status/{tid}",
+            "captured_at": datetime.now(BJ).strftime("%Y-%m-%d %H:%M"),
+        })
+        if len(tweets) >= limit:
+            break
+    # 无绝对时间的推文不入库（created_at 为空），交给上层过滤
+    print(f"    r.jina.ai → 解析 {len(tweets)} 条（无绝对时间，仅作参考）")
+    return []
+
+def fetch_twstalker(username, limit=50):
+    """twstalker.com 镜像站 — HTML 直接渲染推文列表"""
+    import re, html as html_mod
+    try:
+        page = _http_get(f"https://twstalker.com/{username}", timeout=25)
+    except Exception as e:
+        print(f"    twstalker → 失败: {str(e)[:80]}")
+        return []
+    if len(page) < 500 or ("not found" in page.lower() and "timeline-item" not in page):
+        print(f"    twstalker → 无内容（{len(page)}B）")
+        return []
+    tweets = []
+    # 按推文块切分
+    blocks = re.split(r'(?=<div[^>]*class="[^"]*timeline-item)', page)
+    for blk in blocks:
+        mid = re.search(r'data-tweet-id="(\d+)"', blk)
+        mtext = re.search(r'<div[^>]*class="[^"]*tweet-content[^"]*"[^>]*>(.*?)</div>', blk, re.DOTALL)
+        mdate = re.search(r'<span[^>]*class="[^"]*tweet-date[^"]*"[^>]*>(.*?)</span>', blk, re.DOTALL)
+        if not (mid and mtext):
+            continue
+        tid = mid.group(1)
+        text = re.sub(r"<[^>]+>", "", mtext.group(1))
+        text = html_mod.unescape(text).strip()
+        date_raw = ""
+        if mdate:
+            date_raw = re.sub(r"<[^>]+>", "", mdate.group(1)).strip()
+        tweets.append({
+            "id": tid,
+            "author": username,
+            "name": USER_BY_HANDLE.get(username, {}).get("name", username),
+            "text": text,
+            "created_at": _parse_twstalker_date(date_raw),
+            "likes": 0, "retweets": 0, "replies": 0, "views": 0,
+            "url": f"https://x.com/{username}/status/{tid}",
+            "captured_at": datetime.now(BJ).strftime("%Y-%m-%d %H:%M"),
+        })
+        if len(tweets) >= limit:
+            break
+    tweets = [t for t in tweets if t["id"] and t["text"] and t["created_at"]]
+    if tweets:
+        print(f"    twstalker → OK {len(tweets)} 条")
+    else:
+        print(f"    twstalker → 解析出 {len([t for t in tweets if t['id'] and t['text']])} 条但缺日期")
+    return tweets
+
+def _parse_twstalker_date(s):
+    """twstalker 日期格式如 'Aug 24, 2026 · 3:01 PM UTC' → 转成 opencli 兼容格式"""
+    import re
+    if not s:
+        return ""
+    m = re.match(r"([A-Z][a-z]{2})\s+(\d{1,2}),\s+(\d{4})", s)
+    if not m:
+        return ""
+    return f"{m.group(1)} {int(m.group(2)):02d} 00:00:00 +0000 {m.group(3)}"
+
+def fetch_x_ssr(username, limit=50):
+    """x.com 官方页 SSR — 解析 __NEXT_DATA__ 里的推文 JSON"""
+    import json, re
+    try:
+        html = _http_get(f"https://x.com/{username}", timeout=25,
+                         headers={"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"})
+    except Exception as e:
+        print(f"    x.com SSR → 失败: {str(e)[:80]}")
+        return []
+    m = re.search(r'<script id="__NEXT_DATA__" type="application/json"[^>]*>(.*?)</script>', html, re.DOTALL)
+    if not m:
+        print(f"    x.com SSR → 未找到 __NEXT_DATA__（{len(html)}B）")
+        return []
+    try:
+        data = json.loads(m.group(1))
+    except Exception as e:
+        print(f"    x.com SSR → JSON 解析失败: {e}")
+        return []
+    found = []
+    def walk(o):
+        if isinstance(o, dict):
+            if "id_str" in o and "full_text" in o and "created_at" in o:
+                found.append(o)
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+    walk(data)
+    uniq = {}
+    for t in found:
+        uniq[t["id_str"]] = t
+    found = list(uniq.values())
+    found.sort(key=lambda t: t.get("created_at", ""), reverse=True)
+    tweets = []
+    for t in found[:limit]:
+        views = t.get("views")
+        views_n = views.get("count") if isinstance(views, dict) else views
+        tweets.append({
+            "id": str(t["id_str"]),
+            "author": username,
+            "name": USER_BY_HANDLE.get(username, {}).get("name", username),
+            "text": (t.get("full_text") or "").strip(),
+            "created_at": t.get("created_at", ""),
+            "likes": t.get("favorite_count") or 0,
+            "retweets": t.get("retweet_count") or 0,
+            "replies": t.get("reply_count") or 0,
+            "views": views_n or 0,
+            "url": f"https://x.com/{username}/status/{t['id_str']}",
+            "captured_at": datetime.now(BJ).strftime("%Y-%m-%d %H:%M"),
+        })
+    tweets = [t for t in tweets if t["id"] and t["text"] and t["created_at"]]
+    if tweets:
+        print(f"    x.com SSR → OK {len(tweets)} 条")
+    else:
+        print(f"    x.com SSR → 找到 {len(found)} 条但字段不全")
+    return tweets
 
 def load_db():
     if os.path.exists(DATA_FILE):
@@ -150,6 +366,9 @@ def main():
 
     save_db(db)
     print(f"本轮共新增 {total_new} 条")
+    if total_new == 0:
+        print("本轮无新增（抓取源可能全部不可用），跳过部署以避免覆盖线上内容")
+        return
     generate_html(db)
     deploy()
 
