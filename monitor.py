@@ -253,8 +253,8 @@ def _parse_twstalker_date(s):
     return f"{m.group(1)} {int(m.group(2)):02d} 00:00:00 +0000 {m.group(3)}"
 
 def fetch_x_ssr(username, limit=50):
-    """x.com 官方页 SSR — 解析 relay 缓存格式（2026 新版为 TweetPreview 对象，含完整互动数据）"""
-    import re, json
+    """x.com 官方页 SSR — 解析 relay 缓存格式（2026 新版，兼容 TweetPreview / TBirdData 两种推文结构）"""
+    import re, json, base64
     try:
         page = _http_get(f"https://x.com/{username}", timeout=40,
                          headers={"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -262,47 +262,87 @@ def fetch_x_ssr(username, limit=50):
     except Exception as e:
         print(f"    x.com SSR → 失败: {str(e)[:80]}")
         return []
-    if "TweetPreview" not in page or "created_at" not in page:
-        print(f"    x.com SSR → 页面无推文数据（{len(page)}B）")
-        return []
     tweets = []
     seen = set()
-    # 每条推文对象内 text 后紧跟 created_at；rest_id/互动数据在其前方
-    for m in re.finditer(r'text:"((?:[^"\\]|\\.)*?)",created_at:"([^"]+)"', page):
-        text_raw, created_at = m.group(1), m.group(2)
-        head = page[max(0, m.start() - 2000):m.start()]
-        ids = re.findall(r'rest_id:"(\d+)"', head)
-        if not ids:
-            continue
-        tid = ids[-1]
-        if tid in seen:
-            continue
-        seen.add(tid)
-        try:
-            text = json.loads('"' + text_raw + '"')
-        except Exception:
-            text = text_raw.replace("\\n", "\n").replace("\\t", "\t")
-        text = text.strip()
-        if not text:
-            continue
-        favs = re.findall(r'favorite_count:(\d+)', head)
-        rts = re.findall(r'retweet_count:(\d+)', head)
-        rps = re.findall(r'reply_count:(\d+)', head)
-        tweets.append({
-            "id": tid,
-            "author": username,
-            "name": USER_BY_HANDLE.get(username, {}).get("name", username),
-            "text": text,
-            "created_at": created_at,
-            "likes": int(favs[-1]) if favs else 0,
-            "retweets": int(rts[-1]) if rts else 0,
-            "replies": int(rps[-1]) if rps else 0,
-            "views": 0,
-            "url": f"https://x.com/{username}/status/{tid}",
-            "captured_at": datetime.now(BJ).strftime("%Y-%m-%d %H:%M"),
-        })
-        if len(tweets) >= limit:
-            break
+
+    # 格式 A: TweetPreview（text 后紧跟 created_at，rest_id 在其前方）
+    if "TweetPreview" in page:
+        for m in re.finditer(r'text:"((?:[^"\\]|\\.)*?)",created_at:"([^"]+)"', page):
+            text_raw, created_at = m.group(1), m.group(2)
+            head = page[max(0, m.start() - 2000):m.start()]
+            ids = re.findall(r'rest_id:"(\d+)"', head)
+            if not ids:
+                continue
+            tid = ids[-1]
+            if tid in seen:
+                continue
+            seen.add(tid)
+            try:
+                text = json.loads('"' + text_raw + '"')
+            except Exception:
+                text = text_raw.replace("\\n", "\n").replace("\\t", "\t")
+            text = text.strip()
+            if not text:
+                continue
+            favs = re.findall(r'favorite_count:(\d+)', head)
+            rts = re.findall(r'retweet_count:(\d+)', head)
+            rps = re.findall(r'reply_count:(\d+)', head)
+            tweets.append({
+                "id": tid,
+                "author": username,
+                "name": USER_BY_HANDLE.get(username, {}).get("name", username),
+                "text": text,
+                "created_at": created_at,
+                "likes": int(favs[-1]) if favs else 0,
+                "retweets": int(rts[-1]) if rts else 0,
+                "replies": int(rps[-1]) if rps else 0,
+                "views": 0,
+                "url": f"https://x.com/{username}/status/{tid}",
+                "captured_at": datetime.now(BJ).strftime("%Y-%m-%d %H:%M"),
+            })
+            if len(tweets) >= limit:
+                break
+
+    # 格式 B: TBirdData（full_text + created_at_ms 毫秒时间戳，id 为 base64 "Tweet:<id>"）
+    if len(tweets) < limit:
+        for m in re.finditer(r'"client:VHdlZXQ6([A-Za-z0-9+/=]+):details":\$R\[\d+\]=\{(.*?)(?="client:VHdlZXQ6[A-Za-z0-9+/=]+:details":\$R\[\d+\]=\{|$)', page, re.DOTALL):
+            b64, block = m.group(1), m.group(2)
+            try:
+                tid = base64.b64decode("VHdlZXQ6" + b64).decode().replace("Tweet:", "")
+            except Exception:
+                continue
+            if not tid or tid in seen:
+                continue
+            m_ms = re.search(r'created_at_ms:(\d+)', block)
+            m_ft = re.search(r'full_text:"((?:[^"\\]|\\.)*)"', block)
+            if not (m_ms and m_ft):
+                continue
+            created_ms = int(m_ms.group(1))
+            if created_ms < 1700000000000:  # 过滤早期时间戳
+                continue
+            dt = datetime.fromtimestamp(created_ms / 1000, tz=timezone.utc)
+            created_at = dt.strftime("%a %b %d %H:%M:%S %z %Y")
+            try:
+                text = json.loads('"' + m_ft.group(1) + '"')
+            except Exception:
+                text = m_ft.group(1).replace("\\n", "\n").replace("\\t", "\t")
+            text = text.strip()
+            if not text:
+                continue
+            seen.add(tid)
+            tweets.append({
+                "id": tid,
+                "author": username,
+                "name": USER_BY_HANDLE.get(username, {}).get("name", username),
+                "text": text,
+                "created_at": created_at,
+                "likes": 0, "retweets": 0, "replies": 0, "views": 0,
+                "url": f"https://x.com/{username}/status/{tid}",
+                "captured_at": datetime.now(BJ).strftime("%Y-%m-%d %H:%M"),
+            })
+            if len(tweets) >= limit:
+                break
+
     if tweets:
         print(f"    x.com SSR → OK {len(tweets)} 条")
     else:
