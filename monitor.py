@@ -54,7 +54,7 @@ def _http_get(url, timeout=20, headers=None, retries=2):
     raise last_err
 
 def fetch_tweets(username, limit=50):
-    """抓取某用户推文 — 多层兜底：opencli → Nitter多实例 → r.jina.ai → twstalker → x.com SSR → Playwright"""
+    """抓取某用户推文 — 多层兜底：opencli → x.com SSR → Nitter多实例 → r.jina.ai → twstalker"""
     # Tier 1: opencli (local Mac with Chrome extension, 完整互动数据)
     try:
         result = subprocess.run(
@@ -89,23 +89,6 @@ def fetch_tweets(username, limit=50):
     tweets = fetch_twstalker(username, limit)
     if tweets:
         return tweets
-
-    # Tier 6: Playwright headless (last resort, needs cookies)
-    print(f"[{username}] 尝试 Playwright 浏览器抓取...")
-    try:
-        result = subprocess.run(
-            [sys.executable, os.path.join(PROJECT_DIR, "fetch_x.py"), username, str(limit)],
-            capture_output=True, text=True, timeout=90
-        )
-        if result.stderr:
-            print(f"[{username}] Playwright 日志:\n{result.stderr[:300]}")
-        if result.returncode == 0:
-            data = json.loads(result.stdout)
-            if isinstance(data, list):
-                print(f"[{username}] Playwright 抓取成功: {len(data)} 条")
-                return data
-    except Exception as e:
-        print(f"[{username}] Playwright 异常: {e}")
 
     return []
 
@@ -370,6 +353,27 @@ def save_db(db):
     with open(DATA_FILE, "w") as f:
         json.dump(db, f, ensure_ascii=False, indent=2)
 
+def git_sync():
+    """先本地提交(data/tweets.json + index.html)，再 rebase 到最新 origin/main，最后推回去。
+    先提交再 pull，避免 pull --rebase 因为工作区不干净（index.html 每次都会变）而静默失败。"""
+    try:
+        subprocess.run(["git", "add", "data/tweets.json", "index.html"], cwd=PROJECT_DIR, capture_output=True, timeout=15)
+        diff = subprocess.run(["git", "diff", "--staged", "--quiet"], cwd=PROJECT_DIR, capture_output=True, timeout=15)
+        if diff.returncode != 0:
+            subprocess.run(["git", "commit", "-m", "chore: auto-update tweets (local) [skip ci]"],
+                            cwd=PROJECT_DIR, capture_output=True, timeout=15)
+        pull = subprocess.run(["git", "pull", "--rebase"], cwd=PROJECT_DIR, capture_output=True, text=True, timeout=30)
+        if pull.returncode != 0:
+            print(f"git pull --rebase 失败: {pull.stderr[:200]}")
+            return
+        result = subprocess.run(["git", "push"], cwd=PROJECT_DIR, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            print(f"git push 失败: {result.stderr[:200]}")
+        else:
+            print("git push 成功")
+    except Exception as e:
+        print(f"git_sync 异常: {e}")
+
 def main():
     now = datetime.now(BJ).strftime("%Y-%m-%d %H:%M")
     db = load_db()
@@ -418,6 +422,7 @@ def main():
         return
     generate_html(db)
     deploy()
+    git_sync()
 
 def parse_date(date_str):
     """解析 Twitter 日期格式 — 同时支持 opencli (%a %b %d ... +0000 %Y) 和 Nitter RSS (%a, %d %b %Y ... GMT)"""
@@ -680,17 +685,19 @@ def fmt_num(n):
     return str(n)
 
 def deploy():
+    """优先用 GH Actions 的 CF_API_TOKEN/CF_ACCOUNT_ID；本机没配置这两个 env var 时，
+    退回用本机已登录的 wrangler OAuth 会话直接部署（`wrangler login` 缓存的登录态）。"""
     token = os.environ.get("CLOUDFLARE_API_TOKEN")
     account_id = os.environ.get("CLOUDFLARE_ACCOUNT_ID")
-    if not token or not account_id:
-        print("跳过部署：缺少 CLOUDFLARE_API_TOKEN 或 CLOUDFLARE_ACCOUNT_ID")
-        return
+    env = dict(os.environ)
+    if token and account_id:
+        env["CLOUDFLARE_API_TOKEN"] = token
+        env["CLOUDFLARE_ACCOUNT_ID"] = account_id
     try:
         result = subprocess.run(
             ["npx", "wrangler", "pages", "deploy", PROJECT_DIR,
              "--project-name=morris-tracker", "--branch=main", "--commit-dirty=true"],
-            capture_output=True, timeout=90, cwd=PROJECT_DIR,
-            env={**os.environ, "CLOUDFLARE_API_TOKEN": token, "CLOUDFLARE_ACCOUNT_ID": account_id}
+            capture_output=True, text=True, timeout=90, cwd=PROJECT_DIR, env=env
         )
         if result.returncode != 0:
             print(f"部署失败: {result.stderr[:200]}")
